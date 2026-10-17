@@ -1,0 +1,21 @@
+# Replace the static `location /` in your existing Nginx server block with
+# these two locations. Do not add another server block on the same port/name.
+# Keep your existing listen/server_name settings. The game server must run
+# separately (see legocraft.service.example), listening on port 8080.
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /multiplayer {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+}

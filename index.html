@@ -81,6 +81,33 @@
   .mode-btn.alt { background: #36aebf; box-shadow: 0 4px 0 #227783; }
   .mode-btn.alt:active { box-shadow: 0 1px 0 #227783; }
 
+  /* Sessions use the same menu on laptops, tablets and phones. */
+  #start { justify-content: flex-start; }
+  #start > .title { margin-top: auto; }
+  #start::after { content: ""; flex: 1 0 12px; }
+  #session-choice { display: flex; gap: 6px; padding: 5px; border: 1px solid rgba(255,255,255,.2); border-radius: 12px; background: rgba(0,0,0,.3); margin-bottom: 16px; }
+  .session-btn { min-height: 44px; padding: 10px 24px; border: 0; border-radius: 8px; background: transparent; color: #fff; font: inherit; font-size: 15px; font-weight: 800; cursor: pointer; }
+  .session-btn[aria-pressed="true"] { color: var(--dark); background: var(--yellow); }
+  .session-btn:focus-visible, .room-field input:focus-visible, .room-field select:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  #multiplayer-panel { width: min(520px, 100%); box-sizing: border-box; padding: 18px; border: 1px solid rgba(255,255,255,.2); border-radius: 14px; background: rgba(0,0,0,.35); text-align: left; }
+  .room-help { margin: 0 0 14px; font-size: 13px; line-height: 1.5; color: #dbe8ed; }
+  .room-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; }
+  .room-field input, .room-field select { box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.35); border-radius: 7px; background: #122632; color: #fff; font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text; }
+  .room-field input::placeholder { color: #afc1ca; opacity: 1; }
+  .room-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; }
+  .room-action { display: flex; flex-direction: column; gap: 10px; }
+  .room-action .menu-btn { margin-top: 0; width: 100%; min-height: 44px; padding: 11px 12px; font-size: 15px; }
+  #room-join { background: #36aebf; box-shadow: 0 4px 0 #227783; }
+  #room-code { text-transform: uppercase; letter-spacing: 3px; }
+  #room-error { min-height: 20px; margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: #ffd77c; overflow-wrap: anywhere; }
+  #room-reset, #room-leave { margin-top: 14px; }
+  #room-leave { background: #e9edf0; box-shadow: 0 4px 0 #9aa8b1; }
+  #session-status { position: absolute; right: 16px; top: 144px; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 7px 11px; border: 1px solid rgba(255,255,255,.24); border-radius: 7px; background: rgba(5,19,29,.76); font-size: 12px; font-weight: 700; line-height: 1.4; }
+  #session-label { color: var(--yellow); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #session-players { white-space: nowrap; }
+  #session-notice { position: absolute; left: 50%; top: 50px; transform: translateX(-50%); max-width: min(440px, calc(100% - 32px)); padding: 7px 11px; border-radius: 7px; background: rgba(5,19,29,.85); font-size: 13px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
+  #session-notice:empty { display: none; }
+
   /* Inventory */
   #inventory { cursor: default; }
   #inventory h2 { margin: 0 0 6px; font-size: 34px; font-weight: 900; letter-spacing: 2px; color: var(--yellow); text-shadow: 3px 3px 0 var(--red), 6px 6px 0 var(--dark); }
@@ -160,6 +187,9 @@
   body.touch-mode #blockname { bottom: calc(88px + env(safe-area-inset-bottom)); font-size: 12px; }
   body.touch-mode #carry-hint { bottom: auto; top: calc(128px + env(safe-area-inset-top)); width: 80%; font-size: 12px; text-align: center; }
   body.touch-mode #wave-banner { font-size: clamp(24px, 5vw, 40px); text-align: center; width: 85%; top: 28%; }
+  body.touch-mode #session-status { top: calc(122px + env(safe-area-inset-top)); right: auto; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); padding: 5px 9px; font-size: 11px; }
+  body.touch-mode #session-notice { top: calc(154px + env(safe-area-inset-top)); width: max-content; font-size: 12px; }
+  body.touch-mode #session-status:not([hidden]):not(.hidden) ~ #carry-hint { top: calc(192px + env(safe-area-inset-top)); }
   @media (max-width: 600px) {
     .subtitle { font-size: 14px; margin-bottom: 16px; }
     .controls { padding: 12px; font-size: 12px; gap: 5px 10px; }
@@ -175,6 +205,9 @@
     .spawn-btn { padding: 10px 12px; min-height: 44px; }
     #death .title { font-size: 32px; }
     #death .score { font-size: 18px; }
+    #multiplayer-panel { padding: 14px; }
+    .room-actions { gap: 12px; }
+    .session-btn { padding: 10px 20px; }
   }
   @media (max-height: 700px) {
     .overlay { justify-content: flex-start; }
@@ -186,6 +219,9 @@
     #touch-sprint { bottom: calc(186px + env(safe-area-inset-bottom)); min-height: 44px; }
     body.touch-mode #compass { top: max(14px, env(safe-area-inset-top)); width: 28%; }
     body.touch-mode #carry-hint { top: 52px; width: 45%; }
+    body.touch-mode #session-status { top: calc(46px + env(safe-area-inset-top)); }
+    body.touch-mode #session-notice { top: calc(78px + env(safe-area-inset-top)); max-width: 45%; }
+    body.touch-mode #session-status:not([hidden]):not(.hidden) ~ #carry-hint { top: calc(116px + env(safe-area-inset-top)); }
   }
 </style>
 </head>
@@ -199,6 +235,8 @@
     Wave <b id="wave">1</b> &middot; Enemies <b id="alive">0</b><br/></span>
     <span class="tomato-icon" aria-hidden="true"></span>Tomatoes <b id="tomatoes">0</b>
   </div>
+  <div id="session-status" hidden aria-label="Multiplayer session"><span id="session-label"></span><span id="session-players"></span></div>
+  <div id="session-notice" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="hint">Left click: break / attack / grab body<br/>Hold left: carry body<br/>Right click: place<br/>E: inventory<br/>Q / middle click: throw tomato<br/>N: name a fallen Stalker<br/>Esc: pause</div>
   <div id="wave-banner"></div>
   <div id="carry-hint">Carrying a body &mdash; release left click to drop</div>
@@ -232,6 +270,10 @@
   <div id="start" class="overlay">
     <h1 class="title">LEGO<span>CRAFT</span></h1>
     <div class="subtitle">Build. Survive. Smash the minifigs before they smash you.</div>
+    <div id="session-choice" role="group" aria-label="Play solo or together">
+      <button type="button" class="session-btn" id="session-solo" aria-pressed="true">Solo</button>
+      <button type="button" class="session-btn" id="session-multi" aria-pressed="false">Play together</button>
+    </div>
     <div id="input-picker" role="group" aria-label="Control mode">
       <span>Controls</span>
       <button type="button" class="input-btn" id="input-laptop" aria-pressed="true">Laptop</button>
@@ -252,7 +294,7 @@
       <div><kbd>RMB</kbd></div><div>Place block</div>
       <div><kbd>Q</kbd> / <kbd>MMB</kbd></div><div>Throw an exploding tomato (3 handed out every wave)</div>
       <div><kbd>1</kbd>-<kbd>9</kbd> / <kbd>Wheel</kbd></div><div>Select hotbar slot</div>
-      <div><kbd>E</kbd></div><div>Inventory (pauses the game): all bricks and the sword</div>
+      <div><kbd>E</kbd></div><div id="inventory-key-help">Inventory (pauses solo games): all bricks and the sword</div>
       <div><kbd>Esc</kbd></div><div>Pause</div>
     </div>
     <div class="cta" id="start-cta">Generating world&hellip;</div>
@@ -260,12 +302,35 @@
       <button type="button" class="menu-btn mode-btn" id="mode-wave">Survive the waves<small>Minifigs attack in ever harder waves. Score, kills, tomatoes.</small></button>
       <button type="button" class="menu-btn mode-btn alt" id="mode-build">Free build<small>No enemies. Just you, the bricks and the world.</small></button>
     </div>
+    <section id="multiplayer-panel" hidden aria-label="Play together on your network">
+      <p class="room-help">Open this same Raspberry Pi address on each device. Create a room, then share its code so friends can join.</p>
+      <label class="room-field" for="player-name">Your name
+        <input id="player-name" type="text" maxlength="16" autocomplete="nickname" spellcheck="false" placeholder="Builder" />
+      </label>
+      <div class="room-actions">
+        <div class="room-action">
+          <label class="room-field" for="room-mode">Start a new room
+            <select id="room-mode"><option value="wave">Survival</option><option value="build">Free build</option></select>
+          </label>
+          <button type="button" class="menu-btn" id="room-create">Create room</button>
+        </div>
+        <div class="room-action">
+          <label class="room-field" for="room-code">Have a room code?
+            <input id="room-code" type="text" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABC123" aria-label="Six-character room code" />
+          </label>
+          <button type="button" class="menu-btn" id="room-join">Join room</button>
+        </div>
+      </div>
+      <p id="room-error" role="status" aria-live="polite" aria-atomic="true"></p>
+    </section>
     <button type="button" class="menu-btn hidden" id="new-game">New game &mdash; fresh world</button>
+    <button type="button" class="menu-btn" id="room-reset" hidden>New world for everyone</button>
+    <button type="button" class="menu-btn" id="room-leave" hidden>Leave room</button>
   </div>
 
   <div id="inventory" class="overlay hidden" role="dialog" aria-labelledby="inv-title">
     <h2 id="inv-title">Inventory</h2>
-    <div class="inv-sub">Pick a hotbar slot, then tap or click an item to put it there.</div>
+    <div class="inv-sub" id="inv-description">Pick a hotbar slot, then tap or click an item to put it there.</div>
     <div id="inv-items" class="inv-grid"></div>
     <div id="inv-hotbar" class="inv-hotbar"></div>
     <div id="inv-name" class="inv-name">&nbsp;</div>

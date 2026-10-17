@@ -1,0 +1,27 @@
+# Copy to /etc/systemd/system/legocraft.service after replacing:
+#   YOUR_PI_USERNAME with the account that owns the checkout;
+#   /home/YOUR_PI_USERNAME/legocraft with its actual absolute path;
+#   /usr/bin/node with the output of `command -v node`, if different.
+# Create the .local-data directory as YOUR_PI_USERNAME before starting.
+[Unit]
+Description=LEGOCRAFT local multiplayer game
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_PI_USERNAME
+WorkingDirectory=/home/YOUR_PI_USERNAME/legocraft
+ExecStart=/usr/bin/node /home/YOUR_PI_USERNAME/legocraft/server/main.mjs
+Environment=NODE_ENV=production
+Environment=HOST=0.0.0.0
+Environment=PORT=8080
+Environment=DATA_DIR=/home/YOUR_PI_USERNAME/legocraft/.local-data
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

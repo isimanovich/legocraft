@@ -1,0 +1,8 @@
+node_modules/
+.local-data/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+playwright-report/
+test-results/

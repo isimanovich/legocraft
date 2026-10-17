@@ -8,6 +8,9 @@ import { Sfx } from './sfx.js';
 import { rayBox, boxCollides } from './physics.js';
 import { Animal } from './animals.js';
 import { TouchControls } from './touch-controls.js';
+import { MultiplayerSession } from './multiplayer.js';
+import { RemotePlayers } from './remote-players.js';
+import { NetworkEntities } from './network-entities.js';
 import {
   Tomatoes, TOMATOES_PER_WAVE, TOMATO_MAX, TOMATO_BLAST_RADIUS, TOMATO_DAMAGE, TOMATO_CRATER_RADIUS, THROW_COOLDOWN,
 } from './tomatoes.js';
@@ -136,6 +139,17 @@ const state = {
 };
 const enemies = [];
 const INTERMISSION_SECONDS = 5;
+let multiplayerChoice = false;
+let networkLoading = false;
+let networkPackets = [];
+let networkCarryId = null;
+let networkRespawning = false;
+let networkRespawnTimer;
+let networkGeneration = 0;
+const remotePlayers = new RemotePlayers(scene);
+// Initialised after the passive-creature array below.
+let networkEntities;
+const session = new MultiplayerSession({ onPacket: receiveNetworkPacket, onDisconnect: disconnected });
 
 /** Minifigs in a wave. Grows every wave; a wave ends only when all of them are destroyed. */
 function waveSize(wave) {
@@ -299,6 +313,7 @@ function closeInventory() {
 // ---- Spawnable passive creatures ----------------------------------------------
 const animals = [];
 const MAX_ANIMALS = 12;
+networkEntities = new NetworkEntities({ scene, world, enemies, animals, ragdolls });
 
 /** Ground spot about 3 blocks ahead of the player (falls back to nearby natural ground). */
 function spawnSpotAhead(halfW, height) {
@@ -318,6 +333,7 @@ function spawnSpotAhead(halfW, height) {
 }
 
 function spawnAnimal(kind) {
+  if (session.connected) return networkAction('spawn', { kind });
   const probe = new Animal(kind, 0, 0, 0); // cheap: just for its size
   const spot = spawnSpotAhead(probe.halfW, probe.height);
   probe.dispose();
@@ -341,6 +357,7 @@ function removeAnimal(a) {
 
 /** A Stalker that is already dead: appears standing and topples into a ragdoll you can carry and name. */
 function spawnFallenStalker() {
+  if (session.connected) return networkAction('spawn', { kind: 'stalker' });
   const spot = spawnSpotAhead(0.32 * 1.55, 3.5);
   if (!spot) return false;
   const en = new Enemy('stalker', spot.x, spot.y, spot.z);
@@ -408,6 +425,226 @@ function updateCompass() {
   for (let i = n; i < markPool.length; i++) markPool[i].hidden = true;
 }
 
+// ---- Multiplayer sessions --------------------------------------------------
+function notice(text) {
+  $('session-notice').textContent = text;
+  clearTimeout(notice.timer);
+  if (text) notice.timer = setTimeout(() => { $('session-notice').textContent = ''; }, 6500);
+}
+
+function syncSessionUi() {
+  const connected = session.connected;
+  const atPicker = state.mode === 'ready' && !state.gameMode;
+  $('session-choice').hidden = connected || !atPicker;
+  $('session-solo').setAttribute('aria-pressed', String(!multiplayerChoice));
+  $('session-multi').setAttribute('aria-pressed', String(multiplayerChoice));
+  $('multiplayer-panel').hidden = connected || !multiplayerChoice || !atPicker;
+  if (atPicker) $('mode-pick').classList.toggle('hidden', multiplayerChoice);
+  $('session-status').hidden = !connected;
+  $('session-label').textContent = connected ? `Room ${session.roomCode}` : '';
+  $('room-leave').hidden = !connected || state.mode !== 'paused';
+  $('room-reset').hidden = !connected || state.mode !== 'paused' || session.hostId !== session.playerId;
+  $('new-game').classList.toggle('hidden', connected || state.mode !== 'paused');
+  $('inv-description').textContent = connected
+    ? 'Pick a slot and item. The room keeps playing while your bag is open.'
+    : 'Pick a hotbar slot, then tap or click an item to put it there.';
+  $('inventory-key-help').textContent = connected
+    ? 'Inventory (the room keeps playing): all bricks and the sword'
+    : 'Inventory (pauses the game): all bricks and the sword';
+}
+
+for (const id of ['session-choice', 'multiplayer-panel']) {
+  $(id).addEventListener('click', (event) => event.stopPropagation());
+}
+for (const [id, together] of [['session-solo', false], ['session-multi', true]]) {
+  $(id).addEventListener('click', () => {
+    multiplayerChoice = together;
+    syncSessionUi();
+  });
+}
+try { $('player-name').value = localStorage.getItem('legocraft-name') || ''; } catch { /* Optional. */ }
+$('room-create').addEventListener('click', () => connectRoom('create'));
+$('room-join').addEventListener('click', () => connectRoom('join'));
+$('room-code').addEventListener('input', () => {
+  $('room-code').value = $('room-code').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+});
+$('room-code').addEventListener('keydown', (event) => {
+  if (event.code === 'Enter') { event.preventDefault(); connectRoom('join'); }
+});
+$('room-leave').addEventListener('click', (event) => { event.stopPropagation(); leaveRoom(); });
+$('room-reset').addEventListener('click', (event) => {
+  event.stopPropagation();
+  if (session.hostId === session.playerId) networkAction('reset');
+});
+
+async function connectRoom(type) {
+  if (networkLoading || session.connected || state.mode !== 'ready') return;
+  const name = $('player-name').value.trim().slice(0, 16) || 'Builder';
+  const roomCode = $('room-code').value.trim().toUpperCase();
+  if (type === 'join' && !/^[A-Z0-9]{6}$/.test(roomCode)) {
+    $('room-error').textContent = 'Enter the six-character room code from your friend’s screen.';
+    return;
+  }
+  try { localStorage.setItem('legocraft-name', name); } catch { /* Optional. */ }
+  for (const id of ['room-create', 'room-join', 'session-solo', 'session-multi']) $(id).disabled = true;
+  $('room-error').textContent = type === 'create' ? 'Creating room…' : 'Joining room…';
+  networkLoading = true;
+  networkPackets = [];
+  sfx.init();
+  try {
+    const welcome = await session.connect({ type, name, roomCode, gameMode: $('room-mode').value });
+    $('room-error').textContent = '';
+    await loadNetworkWorld(welcome);
+  } catch (error) {
+    networkLoading = false;
+    session.close();
+    $('room-error').textContent = error.message;
+    syncSessionUi();
+  } finally {
+    for (const id of ['room-create', 'room-join', 'session-solo', 'session-multi']) $(id).disabled = false;
+  }
+}
+
+function networkAction(action, details = {}) {
+  if (!session.connected || networkLoading) return false;
+  session.pose(player, state.mode === 'playing' && !state.naming);
+  return session.action(action, details);
+}
+
+async function loadNetworkWorld(packet) {
+  const generation = ++networkGeneration;
+  networkLoading = true;
+  state.mode = 'loading';
+  document.exitPointerLock?.();
+  remotePlayers.clear();
+  networkEntities.clear();
+  networkCarryId = null;
+  networkRespawning = false;
+  resetRun();
+  $('death').classList.add('hidden');
+  showStartOverlay('loading');
+  world.regenerate(packet.world.seed);
+  for (const [x, y, z, block] of packet.blocks) world.set(x, y, z, block);
+  state.gameMode = packet.state.gameMode;
+  document.body.classList.toggle('build-mode', state.gameMode === 'build');
+  const own = packet.state.players.find((p) => p.id === session.playerId);
+  if (own) setNetworkPosition(own);
+  applyNetworkState(packet.state);
+  await new Promise((resolve) => buildWorld(resolve));
+  if (!session.connected || generation !== networkGeneration) return;
+  state.mode = player.health <= 0 ? 'dead' : 'ready';
+  networkLoading = false;
+  if (state.mode === 'dead') die();
+  else showStartOverlay('ready');
+  syncControls();
+  const pending = networkPackets;
+  networkPackets = [];
+  for (const queued of pending) receiveNetworkPacket(queued);
+  notice(`Room ${session.roomCode}: share this code. Pausing stops only your controls.`);
+}
+
+function setNetworkPosition(position) {
+  player.pos.set(position.x, position.y, position.z);
+  player.vel.set(0, 0, 0);
+  player.yaw = position.yaw ?? player.yaw;
+  player.pitch = position.pitch ?? player.pitch;
+  player.syncCamera();
+}
+
+function receiveNetworkPacket(packet) {
+  if (networkLoading) {
+    // A backgrounded tab may wait for animation frames while sockets keep
+    // receiving. Keep the latest state, and preserve authoritative edits.
+    if (packet.type === 'event') return;
+    if (packet.type === 'world') { networkPackets = [packet]; return; }
+    if (packet.type === 'state' || packet.type === 'correction') {
+      const previous = networkPackets.findIndex((p) => p.type === packet.type);
+      if (previous >= 0) { networkPackets[previous] = packet; return; }
+    }
+    networkPackets.push(packet);
+    return;
+  }
+  if (packet.type === 'state') applyNetworkState(packet);
+  else if (packet.type === 'blocks') {
+    for (const [x, y, z, block] of packet.blocks) world.set(x, y, z, block);
+  } else if (packet.type === 'world') loadNetworkWorld(packet);
+  else if (packet.type === 'correction') setNetworkPosition(packet);
+  else if (packet.type === 'event') {
+    if (packet.event === 'explosion') {
+      debris.burst(packet.x, packet.y, packet.z, 0xd62b1e, 18, 0.2, 7);
+      sfx.explosion();
+    } else if (packet.event === 'kill') sfx.killEnemy();
+    else if (packet.event === 'break') {
+      debris.burst(packet.x + 0.5, packet.y + 0.5, packet.z + 0.5, BLOCK_INFO[packet.block]?.color ?? 0xaaaaaa, 8);
+      sfx.breakBlock();
+    } else if (packet.event === 'place') sfx.placeBlock();
+  } else if (packet.type === 'error') {
+    if (packet.code === 'RESPAWN_COOLDOWN') cancelRespawnWait();
+    notice(packet.message);
+  }
+}
+
+function applyNetworkState(snapshot) {
+  const own = snapshot.players.find((p) => p.id === session.playerId);
+  if (!own) return;
+  const oldHealth = player.health;
+  const oldWave = state.wave;
+  session.hostId = snapshot.hostId;
+  Object.assign(state, { score: snapshot.score, kills: snapshot.kills, wave: snapshot.wave,
+    waveRemaining: snapshot.remaining, intermission: snapshot.intermission, tomatoes: own.tomatoes });
+  if (own.health > 0 && (networkRespawning || state.mode === 'dead')) {
+    cancelRespawnWait();
+    setNetworkPosition(own);
+    $('death').classList.add('hidden');
+    state.mode = 'ready';
+    showStartOverlay('ready');
+    if (controlMode === 'touch') play();
+  }
+  player.health = own.health;
+  if (own.health < oldHealth) { state.flash = 1; sfx.hurt(); }
+  networkCarryId = own.carryId ?? null;
+  if (networkCarryId) {
+    const body = snapshot.bodies?.find((b) => b.id === networkCarryId);
+    $('carry-hint').textContent = carryHint(body?.name);
+    $('carry-hint').style.opacity = 1;
+  } else $('carry-hint').style.opacity = 0;
+  remotePlayers.updatePlayers(snapshot.players, session.playerId);
+  networkEntities.apply(snapshot);
+  $('session-players').textContent = `${snapshot.players.length}/8 players${session.hostId === session.playerId ? ' · Host' : ''}`;
+  syncSessionUi();
+  if (oldWave !== state.wave && !networkLoading) showWaveBanner(`WAVE ${state.wave}`);
+  if (player.health <= 0 && state.mode !== 'dead' && !networkLoading && !networkRespawning) die();
+}
+
+function leaveRoom() {
+  cancelRespawnWait();
+  ++networkGeneration;
+  session.close();
+  networkLoading = false;
+  networkPackets = [];
+  networkCarryId = null;
+  remotePlayers.clear();
+  networkEntities.clear();
+  multiplayerChoice = false;
+  notice('You left the room.');
+  newGame();
+}
+
+function disconnected(roomCode) {
+  cancelRespawnWait();
+  ++networkGeneration;
+  networkLoading = false;
+  networkPackets = [];
+  networkCarryId = null;
+  remotePlayers.clear();
+  networkEntities.clear();
+  multiplayerChoice = true;
+  $('room-code').value = roomCode;
+  $('room-error').textContent = `Connection lost. Rejoin room ${roomCode} when the Pi is available.`;
+  notice('Disconnected. Rejoin to continue; your shared world stays on the Pi.');
+  newGame();
+}
+
 // ---- Input -----------------------------------------------------------------
 const canvas = renderer.domElement;
 let controlMode = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 ? 'touch' : 'laptop';
@@ -440,6 +677,10 @@ function holdAction(button, held) {
   state.mouse[button] = held;
   if (held && button === 0) state.swingCooldown = 0;
   if (held && button === 2) state.placeCooldown = 0;
+  if (!held && button === 0 && session.connected && !networkLoading) {
+    session.action('drop');
+    networkCarryId = null;
+  }
   if (!held && button === 0 && ragdolls.carrying) {
     player.lookDir(_dir);
     ragdolls.drop(_dir.clone().multiplyScalar(2.5).add(player.vel));
@@ -463,6 +704,8 @@ function syncControls() {
   $('touch-help').hidden = !touch;
   $('laptop-help').hidden = touch;
   touchControls.setEnabled(touch && state.mode === 'playing' && !state.naming);
+  syncSessionUi();
+  if (!networkLoading) session.pose(player, state.mode === 'playing' && !state.naming);
 }
 
 function selectControls(mode) {
@@ -488,7 +731,7 @@ function play() {
   state.mode = 'playing';
   $('start').classList.add('hidden');
   syncControls();
-  if (fresh && state.gameMode === 'wave' && state.waveRemaining === 0 && enemies.length === 0) startWave(1);
+  if (!session.connected && fresh && state.gameMode === 'wave' && state.waveRemaining === 0 && enemies.length === 0) startWave(1);
 }
 
 function pauseGame() {
@@ -529,6 +772,9 @@ function showStartOverlay(kind) {
   else if (kind === 'ready') cta.textContent = controlMode === 'touch' ? 'Tap to play' : 'Click to play';
   else if (kind === 'paused') cta.textContent = controlMode === 'touch' ? 'Paused — tap to resume' : 'Paused — click to resume';
   $('start').classList.remove('hidden');
+  if (session.connected && kind === 'ready') cta.textContent = `Room ${session.roomCode} — ${controlMode === 'touch' ? 'tap' : 'click'} to play`;
+  if (session.connected && kind === 'paused') cta.textContent = `Room keeps playing — ${controlMode === 'touch' ? 'tap' : 'click'} to resume`;
+  syncSessionUi();
 }
 
 document.addEventListener('pointerlockchange', () => {
@@ -624,7 +870,7 @@ $('start').addEventListener('click', () => {
   lock();
 });
 function chooseMode(mode) {
-  if (state.mode !== 'ready') return;
+  if (state.mode !== 'ready' || networkLoading) return;
   state.gameMode = mode;
   if (mode === 'build') state.tomatoes = TOMATO_MAX; // nothing to earn them from, so start stocked
   document.body.classList.toggle('build-mode', mode === 'build');
@@ -712,6 +958,7 @@ function animalUnderCrosshair(reach) {
 
 function swing() {
   state.swing = 1;
+  if (session.connected) { networkAction('attack'); return; }
   const target = enemyUnderCrosshair(4.5);
   player.eyePos(_eye);
   player.lookDir(_dir);
@@ -753,6 +1000,11 @@ function swing() {
 function place() {
   const item = hotbar[state.slot];
   if (item === 'sword') return; // nothing to place
+  if (session.connected) {
+    state.swing = 0.6;
+    networkAction('place', { block: item });
+    return;
+  }
   player.eyePos(_eye);
   player.lookDir(_dir);
   const hit = world.raycast(_eye, _dir, 6);
@@ -853,7 +1105,13 @@ function crater(c, r) {
 
 /** Lob a tomato from the eye along the crosshair, if there's one in hand. */
 function throwTomato() {
-  if (state.mode !== 'playing' || state.tomatoes <= 0 || state.throwCooldown > 0 || ragdolls.carrying) return;
+  if (state.mode !== 'playing' || state.tomatoes <= 0 || state.throwCooldown > 0 || ragdolls.carrying || networkCarryId) return;
+  if (session.connected) {
+    state.throwCooldown = THROW_COOLDOWN;
+    networkAction('tomato');
+    sfx.throwTomato();
+    return;
+  }
   state.tomatoes--;
   state.throwCooldown = THROW_COOLDOWN;
   player.eyePos(_eye);
@@ -876,7 +1134,7 @@ function carryHint(name) {
 /** Open the name prompt for the body being carried, or the one under the crosshair. */
 function beginNaming() {
   if (state.mode !== 'playing' || state.naming) return;
-  let body = ragdolls.carrying;
+  let body = session.connected ? ragdolls.bodies.find((b) => b.netId === networkCarryId) : ragdolls.carrying;
   if (!body) {
     player.eyePos(_eye);
     player.lookDir(_dir);
@@ -903,6 +1161,10 @@ function endNaming(confirm) {
   syncControls();
   if (!confirm || !ragdolls.bodies.includes(body)) return;
   const name = nameInput.value.trim().slice(0, 16);
+  if (session.connected) {
+    networkAction('name', { bodyId: body.netId, name });
+    return;
+  }
   ragdolls.setName(body, name, (n) => {
     const s = makeNameTag(n, { color: '#ffffff', pill: 'rgba(60, 20, 80, 0.8)', cache: false });
     s?.scale.set(NAME_TAG_SIZE.w, NAME_TAG_SIZE.h, 1);
@@ -979,6 +1241,9 @@ function detonate(en) {
 
 function die() {
   state.mode = 'dead';
+  if (state.naming) endNaming(false);
+  state.inventoryOpen = false;
+  $('inventory').classList.add('hidden');
   clearInput();
   syncControls();
   sfx.die();
@@ -1015,7 +1280,27 @@ function resetRun() {
 }
 
 /** After death: same world, fresh run. */
+function cancelRespawnWait() {
+  networkRespawning = false;
+  clearTimeout(networkRespawnTimer);
+  $('restart-game').disabled = false;
+  $('restart-game').textContent = 'Rebuild yourself';
+}
+
 function restart() {
+  if (session.connected) {
+    if (networkRespawning) return;
+    networkRespawning = true;
+    $('restart-game').disabled = true;
+    $('restart-game').textContent = 'Rebuilding…';
+    session.action('respawn');
+    networkRespawnTimer = setTimeout(() => {
+      if (!networkRespawning) return;
+      cancelRespawnWait();
+      notice('Respawn was not confirmed. Try Rebuild yourself again.');
+    }, 3000);
+    return;
+  }
   resetRun();
   player.spawn();
   if (state.gameMode === 'wave') startWave(1);
@@ -1030,6 +1315,7 @@ function restart() {
 /** From the pause menu: throw the world away and generate a new one, then wait for a click to play. */
 function newGame() {
   state.mode = 'loading';
+  document.exitPointerLock?.();
   resetRun();
   state.gameMode = null;
   document.body.classList.remove('build-mode');
@@ -1086,7 +1372,7 @@ function frame(now) {
 
     // Wave flow (wave mode only): spawn the wave's quota a few at a time; when every
     // minifig is destroyed, pause briefly, then start the next (harder) wave.
-    if (state.gameMode === 'wave' && state.waveRemaining === 0 && enemies.length === 0) {
+    if (!session.connected && state.gameMode === 'wave' && state.waveRemaining === 0 && enemies.length === 0) {
       if (state.intermission <= 0) {
         state.intermission = INTERMISSION_SECONDS;
         showWaveBanner(`WAVE ${state.wave} CLEARED`);
@@ -1096,38 +1382,42 @@ function frame(now) {
       }
     }
 
+    const authoritativeHealth = player.health;
     player.update(dt);
+    if (session.connected) player.health = authoritativeHealth;
 
-    // Enemies
-    for (let i = enemies.length - 1; i >= 0; i--) {
-      const en = enemies[i];
-      en.update(dt, player, enemyCtx);
-      if (en.pos.y < -5) {
-        scene.remove(en.group);
-        enemies.splice(i, 1);
+    if (!session.connected) {
+      // Enemies
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const en = enemies[i];
+        en.update(dt, player, enemyCtx);
+        if (en.pos.y < -5) {
+          scene.remove(en.group);
+          enemies.splice(i, 1);
+        }
+        if (state.mode !== 'playing') break;
       }
-      if (state.mode !== 'playing') break;
-    }
-    // Passive creatures
-    for (let i = animals.length - 1; i >= 0; i--) {
-      const a = animals[i];
-      a.update(dt, world, player);
-      if (a.pos.y < -5) removeAnimal(a);
-    }
-    // Detonations are deferred so removing several enemies at once can't
-    // disturb the loop above.
-    while (pendingDetonations.length && state.mode === 'playing') detonate(pendingDetonations.shift());
-    pendingDetonations.length = 0;
-    state.spawnTimer -= dt;
-    if (state.gameMode === 'wave' && state.spawnTimer <= 0 && state.waveRemaining > 0 && enemies.length < maxAlive(state.wave)) {
-      if (spawnEnemy()) state.waveRemaining--;
-      state.spawnTimer = Math.max(0.6, 2.5 - state.wave * 0.15);
+      // Passive creatures
+      for (let i = animals.length - 1; i >= 0; i--) {
+        const a = animals[i];
+        a.update(dt, world, player);
+        if (a.pos.y < -5) removeAnimal(a);
+      }
+      // Detonations are deferred so removing several enemies at once can't
+      // disturb the loop above.
+      while (pendingDetonations.length && state.mode === 'playing') detonate(pendingDetonations.shift());
+      pendingDetonations.length = 0;
+      state.spawnTimer -= dt;
+      if (state.gameMode === 'wave' && state.spawnTimer <= 0 && state.waveRemaining > 0 && enemies.length < maxAlive(state.wave)) {
+        if (spawnEnemy()) state.waveRemaining--;
+        state.spawnTimer = Math.max(0.6, 2.5 - state.wave * 0.15);
+      }
     }
 
     // Mouse actions (hold to repeat). Holding left while carrying a body keeps carrying it.
     state.swingCooldown -= dt;
     state.placeCooldown -= dt;
-    if (state.mouse[0] && state.swingCooldown <= 0 && !ragdolls.carrying) {
+    if (state.mouse[0] && state.swingCooldown <= 0 && !ragdolls.carrying && !networkCarryId) {
       swing();
       state.swingCooldown = 0.28;
     }
@@ -1138,15 +1428,17 @@ function frame(now) {
     state.throwCooldown -= dt;
 
     // Tomatoes in flight (bursts may kill minifigs or the player)
-    tomatoes.update(dt, tomatoCtx);
+    if (!session.connected) {
+      tomatoes.update(dt, tomatoCtx);
 
-    // Ragdoll bodies: the carried one hangs from a point in front of the eye.
-    player.eyePos(_hand);
-    player.lookDir(_dir);
-    _hand.addScaledVector(_dir, CARRY_DISTANCE);
-    _hand.y -= 0.25;
-    ragdolls.update(dt, player, _hand);
-    if (!ragdolls.carrying) $('carry-hint').style.opacity = 0;
+      // Ragdoll bodies: the carried one hangs from a point in front of the eye.
+      player.eyePos(_hand);
+      player.lookDir(_dir);
+      _hand.addScaledVector(_dir, CARRY_DISTANCE);
+      _hand.y -= 0.25;
+      ragdolls.update(dt, player, _hand);
+      if (!ragdolls.carrying) $('carry-hint').style.opacity = 0;
+    }
 
     // Target outline
     player.eyePos(_eye);
@@ -1162,6 +1454,11 @@ function frame(now) {
   }
 
   // Always animate these so pause/death don't freeze mid-effect.
+  if (session.connected && !networkLoading) {
+    session.update(dt, player, state.mode === 'playing' && !state.naming);
+    remotePlayers.update(dt);
+    networkEntities.update(dt);
+  }
   debris.update(dt);
   world.update(4);
 

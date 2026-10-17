@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LEGOCRAFT</title>
+<style>
+  :root {
+    --yellow: #f2cd37;
+    --red: #c91a09;
+    --blue: #0055bf;
+    --dark: #05131d;
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; }
+  #ui { position: fixed; inset: 0; pointer-events: none; }
+
+  /* Crosshair */
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); }
+  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,0.9); box-shadow: 0 0 2px #000; }
+  #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #crosshair::after { top: 10px; left: 0; width: 22px; height: 2px; }
+
+  /* Top-left stats */
+  #stats { position: absolute; left: 16px; top: 14px; font-weight: 700; font-size: 15px; text-shadow: 0 2px 0 #000, 0 0 6px rgba(0,0,0,.6); line-height: 1.5; }
+  #stats b { color: var(--yellow); }
+  /* Free build: no waves, so hide the combat readouts. */
+  body.build-mode #stats .wave-only, body.build-mode #compass, body.build-mode #health { display: none; }
+  .tomato-icon { display: inline-block; width: 11px; height: 11px; border-radius: 50%; background: #d62b1e; box-shadow: inset -2px -2px 0 rgba(0,0,0,.3), 0 1px 0 #000; margin-right: 6px; vertical-align: -1px; position: relative; }
+  .tomato-icon::after { content: ""; position: absolute; left: 4px; top: -3px; width: 3px; height: 4px; background: #3f8f2c; border-radius: 1px; }
+
+  /* Health */
+  #health { position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%); width: 320px; height: 20px; background: rgba(0,0,0,.55); border: 3px solid var(--dark); border-radius: 4px; box-shadow: 0 2px 0 rgba(0,0,0,.5); }
+  #health .fill { height: 100%; width: 100%; background: linear-gradient(#ff5a4a, var(--red)); transition: width .12s; }
+  #health .label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; text-shadow: 0 1px 0 #000; }
+
+  /* Hotbar */
+  #hotbar { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px; background: rgba(0,0,0,.45); border-radius: 8px; }
+  .slot { width: 52px; height: 52px; border: 3px solid rgba(255,255,255,.25); border-radius: 6px; position: relative; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+  .slot.active { border-color: var(--yellow); box-shadow: 0 0 0 2px rgba(242,205,55,.4); transform: translateY(-4px); }
+  .slot .brick { width: 32px; height: 32px; border-radius: 3px; box-shadow: inset 0 -6px 0 rgba(0,0,0,.25), inset 0 2px 0 rgba(255,255,255,.25); position: relative; }
+  .slot .brick::after { content: ""; position: absolute; left: 50%; top: -5px; width: 14px; height: 7px; transform: translateX(-50%); border-radius: 50%/60%; background: inherit; box-shadow: inset 0 -2px 0 rgba(0,0,0,.25); }
+  .slot .num { position: absolute; left: 4px; top: 2px; font-size: 11px; font-weight: 800; opacity: .8; text-shadow: 0 1px 0 #000; }
+  #blockname { position: absolute; left: 50%; bottom: 122px; transform: translateX(-50%); font-weight: 700; font-size: 14px; text-shadow: 0 2px 0 #000; opacity: .9; }
+
+  /* Flash */
+  #flash { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(201,26,9,0) 40%, rgba(201,26,9,.85) 100%); opacity: 0; }
+
+  /* Enemy direction bar: a marker per minifig at its bearing relative to where you look.
+     The bar spans 90 degrees either side; anything behind you is pinned to an edge as a chevron. */
+  #compass { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); width: 440px; height: 22px; background: rgba(5,19,29,.55); border: 2px solid rgba(255,255,255,.18); border-radius: 6px; box-sizing: border-box; overflow: visible; }
+  #compass .notch { position: absolute; left: 50%; top: -4px; width: 2px; height: 26px; background: rgba(255,255,255,.75); transform: translateX(-50%); box-shadow: 0 0 2px #000; }
+  #compass-marks { position: absolute; inset: 0; }
+  #compass .mark { position: absolute; left: 0; bottom: 3px; width: 7px; height: 8px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.55), 0 1px 0 #000; transform: translateX(-50%); transition: height .1s; }
+  #compass .mark.hunting { animation: hunt .5s ease-in-out infinite alternate; }
+  @keyframes hunt { from { filter: brightness(1); } to { filter: brightness(1.8); } }
+  #compass .mark.behind { background: transparent !important; box-shadow: none; width: auto; height: auto !important; bottom: 1px; font-size: 16px; line-height: 16px; font-weight: 900; text-shadow: 0 0 2px #000, 0 1px 0 #000; }
+  @media (prefers-reduced-motion: reduce) { #compass .mark.hunting { animation: none; filter: brightness(1.4); } }
+
+  /* Overlays */
+  .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(5,19,29,.78); pointer-events: auto; cursor: pointer; text-align: center; }
+  .overlay.hidden { display: none; }
+  .title { font-size: 72px; font-weight: 900; letter-spacing: 4px; color: var(--yellow); text-shadow: 4px 4px 0 var(--red), 8px 8px 0 var(--dark); margin: 0 0 8px; }
+  .title span { color: #fff; }
+  .subtitle { font-size: 18px; opacity: .9; margin-bottom: 28px; }
+  .controls { display: grid; grid-template-columns: auto auto; gap: 6px 18px; font-size: 15px; text-align: left; background: rgba(0,0,0,.35); padding: 16px 22px; border-radius: 10px; margin-bottom: 26px; }
+  .controls kbd { display: inline-block; min-width: 18px; padding: 2px 7px; border-radius: 5px; background: #fff; color: var(--dark); font-weight: 800; font-family: inherit; font-size: 13px; box-shadow: 0 2px 0 #999; margin-right: 2px; }
+  .cta { font-size: 22px; font-weight: 800; color: var(--yellow); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  .menu-btn { margin-top: 22px; padding: 10px 22px; font: inherit; font-size: 16px; font-weight: 800; color: var(--dark); background: var(--yellow); border: 0; border-radius: 8px; box-shadow: 0 4px 0 #a88a1c; cursor: pointer; }
+  .menu-btn:hover { filter: brightness(1.08); }
+  .menu-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #a88a1c; }
+  .menu-btn:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  .menu-btn.hidden { display: none; }
+  #mode-pick { display: flex; gap: 18px; margin-top: 6px; }
+  #mode-pick.hidden { display: none; }
+  .mode-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 240px; padding: 14px 22px; font-size: 20px; margin-top: 0; }
+  .mode-btn small { font-size: 12px; font-weight: 600; opacity: .8; line-height: 1.3; }
+  .mode-btn.alt { background: #36aebf; box-shadow: 0 4px 0 #227783; }
+  .mode-btn.alt:active { box-shadow: 0 1px 0 #227783; }
+
+  /* Inventory */
+  #inventory { cursor: default; }
+  #inventory h2 { margin: 0 0 6px; font-size: 34px; font-weight: 900; letter-spacing: 2px; color: var(--yellow); text-shadow: 3px 3px 0 var(--red), 6px 6px 0 var(--dark); }
+  .inv-sub { font-size: 14px; opacity: .85; margin-bottom: 18px; }
+  .inv-sub kbd { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #fff; color: var(--dark); font-weight: 800; font-family: inherit; font-size: 12px; }
+  .inv-grid { display: grid; grid-template-columns: repeat(7, 58px); gap: 8px; padding: 12px; background: rgba(0,0,0,.4); border-radius: 10px; }
+  .inv-hotbar { display: flex; gap: 6px; padding: 8px; margin-top: 16px; background: rgba(0,0,0,.4); border-radius: 8px; }
+  .inv-grid .slot, .inv-hotbar .slot { cursor: pointer; width: 58px; height: 58px; }
+  .inv-hotbar .slot { width: 52px; height: 52px; }
+  .inv-grid .slot:hover, .inv-hotbar .slot:hover { border-color: rgba(255,255,255,.7); }
+  .inv-grid .slot:focus-visible, .inv-hotbar .slot:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  .inv-hotbar .slot.active { border-color: var(--yellow); box-shadow: 0 0 0 2px rgba(242,205,55,.4); transform: none; }
+  .inv-name { margin-top: 12px; font-size: 16px; font-weight: 700; color: var(--yellow); text-shadow: 0 1px 0 #000; min-height: 20px; }
+  .inv-spawn { display: flex; gap: 10px; }
+  .spawn-btn { margin-top: 0; padding: 8px 18px; font-size: 15px; }
+  .spawn-btn.alt { background: #81007b; color: #fff; box-shadow: 0 4px 0 #4a0047; }
+  .spawn-btn.alt:active { box-shadow: 0 1px 0 #4a0047; }
+  /* Sword icon: a tilted blade with a guard, drawn in CSS so it needs no image. */
+  .slot .sword { position: relative; width: 34px; height: 34px; }
+  .slot .sword::before { content: ""; position: absolute; left: 15px; top: 0; width: 5px; height: 24px; background: linear-gradient(90deg, #e9ecef, #9ba19d); border-radius: 2px 2px 0 0; transform: rotate(0deg); box-shadow: 0 1px 0 #000; }
+  .slot .sword::after { content: ""; position: absolute; left: 7px; top: 22px; width: 21px; height: 4px; background: var(--yellow); border-radius: 2px; box-shadow: 0 1px 0 #000, 8px 6px 0 -1px #6c4a2e; }
+  #death .title { color: var(--red); text-shadow: 4px 4px 0 var(--dark); font-size: 64px; }
+  #death .score { font-size: 26px; margin-bottom: 22px; }
+  #death .score b { color: var(--yellow); }
+  #wave-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-size: 40px; font-weight: 900; color: var(--yellow); text-shadow: 3px 3px 0 var(--red), 6px 6px 0 var(--dark); opacity: 0; transition: opacity .4s; letter-spacing: 2px; }
+  #hint { position: absolute; right: 16px; top: 14px; font-size: 13px; opacity: .75; text-shadow: 0 1px 0 #000; text-align: right; line-height: 1.5; }
+  #carry-hint { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); font-size: 14px; font-weight: 700; color: var(--yellow); text-shadow: 0 1px 0 #000; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #name-prompt { position: absolute; left: 50%; top: 56%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 22px; background: rgba(5,19,29,.85); border: 3px solid var(--yellow); border-radius: 10px; pointer-events: auto; }
+  #name-prompt.hidden { display: none; }
+  #name-prompt label { font-weight: 800; font-size: 16px; color: var(--yellow); text-shadow: 0 1px 0 #000; }
+  #name-prompt input { font: inherit; font-size: 20px; font-weight: 700; text-align: center; width: 240px; padding: 8px 10px; border-radius: 6px; border: 2px solid rgba(255,255,255,.3); background: rgba(255,255,255,.08); color: #fff; outline: none; }
+  #name-prompt input:focus { border-color: #fff; }
+  #name-prompt .small { font-size: 12px; opacity: .8; }
+  #name-prompt kbd { display: inline-block; padding: 1px 5px; border-radius: 4px; background: #fff; color: var(--dark); font-weight: 800; font-family: inherit; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="crosshair"></div>
+  <div id="compass" aria-label="Enemy direction bar"><div class="notch"></div><div id="compass-marks"></div></div>
+  <div id="stats">
+    <span class="wave-only">Score <b id="score">0</b><br/>
+    Kills <b id="kills">0</b><br/>
+    Wave <b id="wave">1</b> &middot; Enemies <b id="alive">0</b><br/></span>
+    <span class="tomato-icon" aria-hidden="true"></span>Tomatoes <b id="tomatoes">0</b>
+  </div>
+  <div id="hint">Left click: break / attack / grab body<br/>Hold left: carry body<br/>Right click: place<br/>E: inventory<br/>Q / middle click: throw tomato<br/>N: name a fallen Stalker<br/>Esc: pause</div>
+  <div id="wave-banner"></div>
+  <div id="carry-hint">Carrying a body &mdash; release left click to drop</div>
+  <div id="name-prompt" class="hidden" role="dialog" aria-labelledby="name-label">
+    <label id="name-label" for="name-input">Name this fallen Stalker</label>
+    <input id="name-input" type="text" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. Gerald" />
+    <div class="small"><kbd>Enter</kbd> confirm &middot; <kbd>Esc</kbd> cancel &middot; empty name removes it</div>
+  </div>
+  <div id="health"><div class="fill" id="healthfill"></div><div class="label" id="healthlabel">100</div></div>
+  <div id="blockname"></div>
+  <div id="hotbar"></div>
+  <div id="flash"></div>
+
+  <div id="start" class="overlay">
+    <h1 class="title">LEGO<span>CRAFT</span></h1>
+    <div class="subtitle">Build. Survive. Smash the minifigs before they smash you.</div>
+    <div class="controls">
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><div>Move</div>
+      <div><kbd>Mouse</kbd></div><div>Look</div>
+      <div><kbd>Space</kbd></div><div>Jump</div>
+      <div><kbd>Shift</kbd></div><div>Sprint</div>
+      <div><kbd>LMB</kbd></div><div>Break block / attack enemy / hold to carry a fallen Stalker</div>
+      <div><kbd>RMB</kbd></div><div>Place block</div>
+      <div><kbd>Q</kbd> / <kbd>MMB</kbd></div><div>Throw an exploding tomato (3 handed out every wave)</div>
+      <div><kbd>1</kbd>-<kbd>9</kbd> / <kbd>Wheel</kbd></div><div>Select hotbar slot</div>
+      <div><kbd>E</kbd></div><div>Inventory (pauses the game): all bricks and the sword</div>
+      <div><kbd>Esc</kbd></div><div>Pause</div>
+    </div>
+    <div class="cta" id="start-cta">Generating world&hellip;</div>
+    <div id="mode-pick" class="hidden">
+      <button type="button" class="menu-btn mode-btn" id="mode-wave">Survive the waves<small>Minifigs attack in ever harder waves. Score, kills, tomatoes.</small></button>
+      <button type="button" class="menu-btn mode-btn alt" id="mode-build">Free build<small>No enemies. Just you, the bricks and the world.</small></button>
+    </div>
+    <button type="button" class="menu-btn hidden" id="new-game">New game &mdash; fresh world</button>
+  </div>
+
+  <div id="inventory" class="overlay hidden" role="dialog" aria-labelledby="inv-title">
+    <h2 id="inv-title">Inventory</h2>
+    <div class="inv-sub">Pick a hotbar slot, then click an item to put it there. <kbd>E</kbd> or <kbd>Esc</kbd> closes.</div>
+    <div id="inv-items" class="inv-grid"></div>
+    <div id="inv-hotbar" class="inv-hotbar"></div>
+    <div id="inv-name" class="inv-name">&nbsp;</div>
+    <div class="inv-sub" style="margin-top:14px">Spawn a passive creature in front of you</div>
+    <div class="inv-spawn">
+      <button type="button" class="menu-btn spawn-btn" id="spawn-wolf">Wolf</button>
+      <button type="button" class="menu-btn spawn-btn" id="spawn-cat">Cat</button>
+      <button type="button" class="menu-btn spawn-btn alt" id="spawn-stalker">Fallen Stalker</button>
+    </div>
+  </div>
+
+  <div id="death" class="overlay hidden">
+    <h1 class="title">YOU GOT BRICKED</h1>
+    <div class="score">Score <b id="final-score">0</b> &middot; Kills <b id="final-kills">0</b> &middot; Wave <b id="final-wave">1</b></div>
+    <div class="cta">Click or press R to rebuild yourself</div>
+  </div>
+</div>
+
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

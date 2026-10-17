@@ -163,33 +163,62 @@
   #name-prompt input { max-width: 75vw; font-size: 20px; user-select: text; -webkit-user-select: text; }
   #close-inventory { margin-top: 16px; }
 
-  /* Touch controls stay above the safe area and leave the centre clear for aiming. */
+  /* Large, separated touch targets keep the centre clear for aiming. */
+  body.touch-mode {
+    --touch-edge: 12px;
+    --touch-left: max(var(--touch-edge), env(safe-area-inset-left));
+    --touch-right: max(var(--touch-edge), env(safe-area-inset-right));
+    --touch-top: max(12px, env(safe-area-inset-top));
+    --touch-bottom: max(8px, env(safe-area-inset-bottom));
+    --touch-action: 80px;
+    --touch-gap: 12px;
+    --touch-stick: 144px;
+    --touch-utility: 56px;
+    --touch-slot: 52px;
+    --touch-slot-gap: 8px;
+    --touch-slot-padding: 6px;
+    --touch-base: calc(var(--touch-bottom) + 140px);
+    touch-action: pan-x pan-y;
+  }
   #touch-controls { position: absolute; inset: 0; pointer-events: none; }
   .touch-btn, #move-stick { pointer-events: auto; touch-action: none; -webkit-touch-callout: none; }
-  .touch-btn { min-width: 48px; min-height: 48px; padding: 8px; border: 2px solid rgba(255,255,255,.55); border-radius: 12px; background: rgba(5,19,29,.68); color: #fff; font: inherit; font-size: 13px; font-weight: 800; text-shadow: 0 1px 0 #000; }
+  .touch-btn { box-sizing: border-box; min-width: var(--touch-utility); min-height: var(--touch-utility); padding: 8px; border: 2px solid rgba(255,255,255,.65); border-radius: 16px; background: rgba(5,19,29,.78); color: #fff; font: inherit; font-size: 16px; font-weight: 800; line-height: 1.2; text-shadow: 0 1px 0 #000; }
   .touch-btn:active, .touch-btn.pressed, .touch-btn[aria-pressed="true"] { color: var(--dark); background: var(--yellow); text-shadow: none; border-color: var(--yellow); }
-  #touch-menu { position: absolute; right: max(12px, env(safe-area-inset-right)); top: max(12px, env(safe-area-inset-top)); display: flex; gap: 6px; }
-  #move-stick { position: absolute; width: 116px; height: 116px; left: max(16px, env(safe-area-inset-left)); bottom: calc(100px + env(safe-area-inset-bottom)); border: 2px solid rgba(255,255,255,.45); border-radius: 50%; background: rgba(5,19,29,.4); box-sizing: border-box; }
-  #move-stick::before { content: "MOVE"; position: absolute; top: 10px; width: 100%; text-align: center; font-size: 10px; font-weight: 800; opacity: .7; }
-  #move-knob { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; margin: -21px; border-radius: 50%; background: rgba(255,255,255,.65); box-shadow: 0 2px 6px #0008; pointer-events: none; }
-  #touch-sprint { position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: calc(230px + env(safe-area-inset-bottom)); }
-  #touch-actions { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(100px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(2, 62px); gap: 8px; }
-  #touch-actions .touch-btn { min-height: 58px; }
-  #touch-actions small { display: block; font-size: 10px; font-weight: 600; }
+  #touch-menu { position: absolute; right: var(--touch-right); top: var(--touch-top); display: flex; gap: 8px; }
+  #touch-menu .touch-btn { width: var(--touch-utility); padding: 4px; font-size: 15px; }
+  #move-stick { position: absolute; width: var(--touch-stick); height: var(--touch-stick); left: var(--touch-left); bottom: var(--touch-base); border: 3px solid rgba(255,255,255,.6); border-radius: 50%; background: rgba(5,19,29,.48); box-sizing: border-box; }
+  #move-stick::before { content: "MOVE"; position: absolute; top: 12px; width: 100%; text-align: center; font-size: 13px; font-weight: 800; opacity: .85; }
+  #move-knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px; border-radius: 50%; background: rgba(255,255,255,.75); box-shadow: 0 2px 6px #0008; pointer-events: none; }
+  #touch-sprint { position: absolute; left: var(--touch-left); bottom: calc(var(--touch-base) + var(--touch-stick) + 12px); min-width: 84px; }
+  #touch-actions { position: absolute; right: var(--touch-right); bottom: var(--touch-base); display: grid; grid-template-columns: repeat(2, var(--touch-action)); gap: var(--touch-gap); }
+  #touch-actions .touch-btn { width: var(--touch-action); height: var(--touch-action); padding: 5px; font-size: 18px; }
+  #touch-actions small { display: block; margin-top: 4px; font-size: 11px; font-weight: 600; }
   body.touch-mode #hint { display: none; }
-  body.touch-mode #stats { left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top)); font-size: 12px; line-height: 1.4; }
-  body.touch-mode #compass { top: calc(94px + env(safe-area-inset-top)); width: min(440px, calc(100% - 32px)); }
-  body.touch-mode #hotbar { pointer-events: auto; bottom: calc(12px + env(safe-area-inset-bottom)); gap: 3px; padding: 4px; touch-action: none; }
-  body.touch-mode #hotbar .slot { width: clamp(28px, calc((100vw - 60px) / 9), 44px); height: 44px; border-width: 2px; cursor: pointer; }
-  body.touch-mode #hotbar .brick { width: 23px; height: 25px; }
+  body.touch-mode #stats { left: var(--touch-left); top: calc(var(--touch-top) + 72px); font-size: 12px; line-height: 1.4; }
+  body.touch-mode #compass { top: calc(var(--touch-top) + 152px); width: min(440px, calc(100% - 32px)); }
+  body.touch-mode #hotbar { pointer-events: auto; bottom: var(--touch-bottom); display: grid; grid-template-columns: repeat(5, var(--touch-slot)); gap: var(--touch-slot-gap); padding: var(--touch-slot-padding); touch-action: none; }
+  body.touch-mode #hotbar .slot { width: var(--touch-slot); height: var(--touch-slot); border-width: 2px; cursor: pointer; }
+  body.touch-mode #hotbar .slot.active { transform: none; }
+  body.touch-mode #hotbar .brick { width: 30px; height: 32px; }
   body.touch-mode #hotbar .slot:focus-visible { outline: 2px solid #fff; }
-  body.touch-mode #health { bottom: calc(66px + env(safe-area-inset-bottom)); width: min(240px, 70vw); height: 16px; }
-  body.touch-mode #blockname { bottom: calc(88px + env(safe-area-inset-bottom)); font-size: 12px; }
-  body.touch-mode #carry-hint { bottom: auto; top: calc(128px + env(safe-area-inset-top)); width: 80%; font-size: 12px; text-align: center; }
+  body.touch-mode #health { left: auto; right: var(--touch-right); top: calc(var(--touch-top) + 72px); bottom: auto; transform: none; width: 128px; height: 18px; }
+  body.touch-mode #blockname { bottom: calc(var(--touch-bottom) + 126px); max-width: 80%; font-size: 13px; text-align: center; }
+  body.touch-mode #carry-hint { bottom: auto; top: calc(var(--touch-top) + 206px); width: 80%; font-size: 12px; text-align: center; }
   body.touch-mode #wave-banner { font-size: clamp(24px, 5vw, 40px); text-align: center; width: 85%; top: 28%; }
-  body.touch-mode #session-status { top: calc(122px + env(safe-area-inset-top)); right: auto; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); padding: 5px 9px; font-size: 11px; }
-  body.touch-mode #session-notice { top: calc(154px + env(safe-area-inset-top)); width: max-content; font-size: 12px; }
-  body.touch-mode #session-status:not([hidden]):not(.hidden) ~ #carry-hint { top: calc(192px + env(safe-area-inset-top)); }
+  body.touch-mode #session-status { top: calc(var(--touch-top) + 184px); right: auto; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); padding: 5px 9px; font-size: 11px; }
+  body.touch-mode #session-notice { top: calc(var(--touch-top) + 216px); width: max-content; font-size: 12px; }
+  body.touch-mode #session-status:not([hidden]):not(.hidden) ~ #carry-hint { top: calc(var(--touch-top) + 252px); }
+
+  /* Menus scroll with one finger; every item remains an easy-to-tap target. */
+  body.touch-mode .menu-btn, body.touch-mode .session-btn, body.touch-mode #input-picker .input-btn { min-height: 56px; }
+  body.touch-mode .inv-grid { grid-template-columns: repeat(5, 56px); gap: 8px; padding: 8px; }
+  body.touch-mode .inv-grid .slot { width: 56px; height: 56px; }
+  body.touch-mode .inv-hotbar { display: grid; grid-template-columns: repeat(5, 52px); gap: 8px; padding: 6px; }
+  body.touch-mode .inv-hotbar .slot { width: 52px; height: 52px; }
+  body.touch-mode .inv-hotbar .brick { width: 30px; height: 32px; }
+  body.touch-mode #inventory { justify-content: flex-start; }
+  body.touch-mode #inventory h2 { margin-top: auto; }
+  body.touch-mode #inventory::after { content: ""; flex: 1 0 4px; }
   @media (max-width: 600px) {
     .subtitle { font-size: 14px; margin-bottom: 16px; }
     .controls { padding: 12px; font-size: 12px; gap: 5px 10px; }
@@ -213,16 +242,68 @@
     .overlay { justify-content: flex-start; }
     .title { margin-top: 8px; }
   }
-  @media (max-height: 480px) and (orientation: landscape) {
-    #move-stick { bottom: calc(76px + env(safe-area-inset-bottom)); width: 100px; height: 100px; }
-    #touch-actions { bottom: calc(76px + env(safe-area-inset-bottom)); }
-    #touch-sprint { bottom: calc(186px + env(safe-area-inset-bottom)); min-height: 44px; }
-    body.touch-mode #compass { top: max(14px, env(safe-area-inset-top)); width: 28%; }
-    body.touch-mode #carry-hint { top: 52px; width: 45%; }
-    body.touch-mode #session-status { top: calc(46px + env(safe-area-inset-top)); }
-    body.touch-mode #session-notice { top: calc(78px + env(safe-area-inset-top)); max-width: 45%; }
-    body.touch-mode #session-status:not([hidden]):not(.hidden) ~ #carry-hint { top: calc(116px + env(safe-area-inset-top)); }
+  /* Narrow phones wrap all nine slots instead of shrinking their targets. */
+  @media (max-width: 360px) {
+    body.touch-mode { --touch-edge: 8px; --touch-action: 76px; --touch-gap: 10px; --touch-stick: 136px; --touch-slot: 48px; --touch-slot-gap: 6px; --touch-slot-padding: 4px; --touch-base: calc(var(--touch-bottom) + 122px); }
+    body.touch-mode #blockname { bottom: calc(var(--touch-bottom) + 112px); }
+    body.touch-mode .inv-grid { grid-template-columns: repeat(4, 56px); }
+    body.touch-mode .inv-hotbar { grid-template-columns: repeat(5, 48px); gap: 6px; padding: 4px; }
+    body.touch-mode .inv-hotbar .slot { width: 48px; height: 48px; }
   }
+  @media (max-height: 650px) and (orientation: portrait) {
+    body.touch-mode { --touch-edge: 8px; --touch-action: 72px; --touch-gap: 8px; --touch-stick: 128px; --touch-slot: 48px; --touch-slot-gap: 6px; --touch-slot-padding: 4px; --touch-bottom: max(6px, env(safe-area-inset-bottom)); --touch-base: calc(var(--touch-bottom) + 122px); }
+    body.touch-mode #blockname { bottom: calc(var(--touch-bottom) + 112px); }
+  }
+  @media (max-height: 600px) and (orientation: portrait) {
+    body.touch-mode { --touch-action: 68px; }
+    #touch-actions .touch-btn { font-size: 16px; }
+    #touch-actions small { font-size: 10px; }
+  }
+
+  /* Short landscape screens use the width for slots and a separate Sprint target. */
+  @media (max-height: 480px) and (orientation: landscape) {
+    body.touch-mode { --touch-slot: 48px; --touch-slot-gap: 6px; --touch-slot-padding: 4px; --touch-base: calc(var(--touch-bottom) + 76px); }
+    #touch-sprint { left: calc(var(--touch-left) + var(--touch-stick) + 12px); bottom: var(--touch-base); }
+    body.touch-mode #hotbar { grid-template-columns: repeat(9, var(--touch-slot)); }
+    body.touch-mode #stats { top: var(--touch-top); }
+    body.touch-mode #compass { top: var(--touch-top); width: 24%; }
+    body.touch-mode #health { left: 50%; right: auto; top: calc(var(--touch-top) + 32px); width: 144px; transform: translateX(-50%); }
+    body.touch-mode #blockname { bottom: calc(var(--touch-bottom) + 60px); }
+    body.touch-mode #carry-hint { top: calc(var(--touch-top) + 92px); width: 34%; }
+    body.touch-mode #session-status { top: calc(var(--touch-top) + 60px); max-width: 34%; }
+    body.touch-mode #session-notice { top: calc(var(--touch-top) + 92px); max-width: 34%; }
+    body.touch-mode #session-status:not([hidden]):not(.hidden) ~ #carry-hint { top: calc(var(--touch-top) + 128px); }
+    body.touch-mode .inv-hotbar { grid-template-columns: repeat(9, 52px); }
+  }
+  @media (max-width: 600px) and (max-height: 480px) and (orientation: landscape) {
+    body.touch-mode .inv-hotbar { grid-template-columns: repeat(5, 52px); }
+  }
+  @media (max-height: 350px) and (orientation: landscape) {
+    body.touch-mode { --touch-action: 72px; --touch-stick: 128px; --touch-gap: 10px; }
+  }
+
+  /* Tablets have room for bigger controls and a single row of nine slots. */
+  @media (min-width: 768px) and (min-height: 600px) {
+    body.touch-mode { --touch-edge: 16px; --touch-action: 96px; --touch-stick: 168px; --touch-utility: 64px; --touch-slot: 56px; --touch-slot-gap: 8px; --touch-slot-padding: 8px; --touch-base: calc(var(--touch-bottom) + 104px); }
+    #touch-menu { gap: 12px; }
+    #touch-menu .touch-btn { font-size: 16px; }
+    #touch-actions .touch-btn { font-size: 20px; }
+    #touch-actions small { font-size: 12px; }
+    #move-knob { width: 64px; height: 64px; margin: -32px; }
+    body.touch-mode #stats { top: var(--touch-top); font-size: 14px; }
+    body.touch-mode #compass { top: calc(var(--touch-top) + 92px); }
+    body.touch-mode #hotbar { grid-template-columns: repeat(9, var(--touch-slot)); }
+    body.touch-mode #health { top: auto; bottom: calc(var(--touch-bottom) + 88px); right: auto; left: 50%; transform: translateX(-50%); width: 240px; }
+    body.touch-mode #blockname { bottom: calc(var(--touch-bottom) + 116px); font-size: 14px; }
+    body.touch-mode #session-status { top: calc(var(--touch-top) + 128px); }
+    body.touch-mode #session-notice { top: calc(var(--touch-top) + 160px); }
+    body.touch-mode #carry-hint { top: calc(var(--touch-top) + 156px); }
+    body.touch-mode #session-status:not([hidden]):not(.hidden) ~ #carry-hint { top: calc(var(--touch-top) + 196px); }
+    body.touch-mode .inv-grid { grid-template-columns: repeat(7, 64px); gap: 12px; padding: 12px; }
+    body.touch-mode .inv-grid .slot, body.touch-mode .inv-hotbar .slot { width: 64px; height: 64px; }
+    body.touch-mode .inv-hotbar { grid-template-columns: repeat(9, 64px); gap: 8px; padding: 8px; }
+  }
+
 </style>
 </head>
 <body>

@@ -284,17 +284,74 @@ test('phone/tablet portrait and landscape layouts keep controls inside the viewp
   const { page, context, errors } = await open({ viewport: { width: 320, height: 568 }, hasTouch: true, isMobile: true });
   try {
     await page.locator('#mode-wave').tap();
-    for (const [width, height] of [[320,568], [844,390], [1024,768], [768,1024]]) {
+    for (const [width, height] of [[320,568], [390,844], [568,320], [667,375], [844,390], [1024,768], [768,1024]]) {
       await page.setViewportSize({ width, height });
       for (const selector of ['#move-stick', '#touch-sprint', '#touch-actions', '#touch-menu', '#hotbar', '#health', '#compass']) {
         const box = await page.locator(selector).boundingBox();
         assert.ok(box && box.x >= -1 && box.y >= -1 && box.x + box.width <= width + 1 && box.y + box.height <= height + 1, `${selector} fits ${width}x${height}`);
+      }
+      const targets = await page.evaluate(() => [...document.querySelectorAll('#touch-controls button, #move-stick, #hotbar .slot')].map(element => {
+        const r = element.getBoundingClientRect();
+        return { name: element.id || element.dataset.touchHold || element.dataset.touchAction || element.getAttribute('aria-label'), x: r.x, y: r.y, width: r.width, height: r.height,
+          hit: element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)),
+          action: !!element.closest('#touch-actions'), slot: element.classList.contains('slot'), stick: element.id === 'move-stick' };
+      }));
+      const overlaps = (a, b) => a.x < b.x + b.width - 0.5 && a.x + a.width > b.x + 0.5 && a.y < b.y + b.height - 0.5 && a.y + a.height > b.y + 0.5;
+      const crosshair = { x: width / 2 - 8, y: height / 2 - 8, width: 16, height: 16 };
+      for (let i = 0; i < targets.length; i++) {
+        const target = targets[i];
+        const minimum = target.stick ? 128 : target.action ? 68 : target.slot ? 48 : 56;
+        assert.ok(target.width >= minimum - 0.5 && target.height >= minimum - 0.5, `${target.name} has a large target at ${width}x${height}: ${target.width}x${target.height}`);
+        assert.ok(target.hit, `${target.name} can be tapped at ${width}x${height}`);
+        assert.ok(!overlaps(target, crosshair), `${target.name} leaves the aiming point clear at ${width}x${height}`);
+        for (const other of targets.slice(i + 1)) assert.ok(!overlaps(target, other), `${target.name} and ${other.name} do not overlap at ${width}x${height}`);
       }
       await page.locator('[data-touch-action="inventory"]').tap();
       await page.locator('#inv-items .slot').last().tap();
       await page.locator('#close-inventory').tap();
       await page.waitForFunction(() => __game.state.mode === 'playing');
     }
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('touch zoom guard protects play and menus while allowing scrolling and typing', async () => {
+  const { page, context, errors } = await open({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  try {
+    const session = await context.newCDPSession(page);
+    const scale = () => page.evaluate(() => window.visualViewport.scale);
+    const pinch = () => session.send('Input.synthesizePinchGesture', { x: 190, y: 350, scaleFactor: 1.8, relativeSpeed: 800, gestureSourceType: 'touch' });
+    const checkGestureEvents = async (expected) => {
+      const prevented = await page.evaluate(() => ['gesturestart', 'gesturechange', 'gestureend'].map(type => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        document.body.dispatchEvent(event);
+        return event.defaultPrevented;
+      }));
+      assert.deepEqual(prevented, [expected, expected, expected]);
+    };
+    await checkGestureEvents(true);
+    await pinch();
+    assert.ok(Math.abs(await scale() - 1) < 0.01, 'start menu stays at its original scale');
+    await page.locator('#session-multi').tap();
+    await page.locator('#player-name').fill('Young builder');
+    await page.locator('#room-code').fill('abc234');
+    assert.equal(await page.locator('#room-code').inputValue(), 'ABC234');
+    assert.ok(await page.locator('#player-name').evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 16), 'text input does not trigger iOS small-font focus zoom');
+    await page.locator('#start').evaluate(el => { el.scrollTop = 0; });
+    await page.locator('#room-code').evaluate(el => el.blur());
+    const touch = await fingers(page);
+    await touch.down(20, { x: 190, y: 700 });
+    for (const y of [650, 600, 550, 500, 450, 400, 350]) await touch.move(20, { x: 190, y });
+    await touch.up(20);
+    await page.waitForFunction(() => document.getElementById('start').scrollTop > 20);
+    await page.locator('#session-solo').tap();
+    await page.locator('#mode-build').tap();
+    await pinch();
+    assert.ok(Math.abs(await scale() - 1) < 0.01, 'multifinger gestures do not enlarge gameplay');
+    await page.locator('[data-touch-action="pause"]').tap();
+    await checkGestureEvents(true);
+    await page.locator('#input-laptop').tap();
+    await checkGestureEvents(false);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

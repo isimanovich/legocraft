@@ -91,6 +91,19 @@ on-screen controls and does not require mouse locking or a physical keyboard:
 | Rebuild yourself | Restart after dying |
 
 Movement, aiming and actions work with multiple fingers at the same time.
+Touch controls use larger action buttons (96 pixels on tablets), a larger
+thumbstick, and more space between actions so children can hit the intended
+control more easily. On narrow screens,
+the hotbar wraps into two rows rather than shrinking the slots; inventory slots
+are enlarged too.
+
+Touch mode suppresses accidental pinch and double-tap page zoom, including in
+the start, inventory, and naming menus. Menus still scroll with one finger and
+name/room fields still accept typing. Laptop mode keeps normal browser gestures.
+Reload the game after updating if an older session is already zoomed. Safari
+and device accessibility settings can override page behavior, so check on your
+actual iPad/iPhone as well.
+
 Portrait and landscape layouts fit phones and tablets, including screen safe
 areas; landscape gives aiming more room. Switching apps or losing focus pauses
 solo play and releases held inputs. Multiplayer continues for the room. Returning
@@ -379,6 +392,8 @@ src/sfx.js        procedural WebAudio sounds
 src/noise.js      value noise / fBm
 test/smoke.mjs    headless test (node --import ./test/register.mjs test/smoke.mjs)
 src/touch-controls.js   multi-pointer thumbstick, look, and on-screen actions
+src/touch-gestures.js   touch-mode browser zoom protection
+test/touch-gestures.mjs gesture cancellation and normal-input regression checks
 test/browser.mjs  optional Chromium regression tests for touch and laptop controls
 test/multiplayer-browser.mjs optional multi-browser shared-room regression tests
 ```
@@ -391,20 +406,21 @@ flat Minecraft look), structure counts in `World.placeStructures`, `ENEMY_TYPES`
 ## Validation
 
 Install dependencies with `npm ci`, then run the server integration tests,
-headless gameplay suite, and remote-player rendering checks:
+headless gameplay suite, remote-player rendering, and touch-gesture checks:
 
 ```bash
 npm test
 ```
 
-`npm run test:server`, `npm run test:smoke`, and `npm run test:remote` run the
-suites separately.
+`npm run test:server`, `npm run test:smoke`, `npm run test:remote`, and
+`npm run test:touch` run the suites separately.
 The browser suite below is an additional check; physical iPad/iPhone Safari
 testing remains useful for touch, audio, and browser lifecycle behavior.
 
 The browser suite uses Playwright and starts its own local test server. It checks
 simultaneous touches, building/breaking, inventory, carrying/naming, restarting,
-mouse locking and keyboard controls, preference storage, and phone/tablet layouts.
+mouse locking and keyboard controls, preference storage, large touch targets,
+phone/tablet layouts, and zoom prevention with scrollable menus.
 To use the cloud environment's installed Chromium without adding game dependencies:
 
 ```bash

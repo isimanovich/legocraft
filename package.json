@@ -6,11 +6,12 @@
   "engines": { "node": ">=20.19" },
   "scripts": {
     "start": "node server/main.mjs",
-    "test": "npm run test:server && npm run test:smoke && npm run test:remote",
+    "test": "npm run test:server && npm run test:smoke && npm run test:remote && npm run test:touch",
     "test:server": "node --test server/*.test.mjs",
     "test:smoke": "node --import ./test/register.mjs test/smoke.mjs",
     "test:browser": "node test/browser.mjs",
     "test:remote": "node --import ./test/register.mjs test/remote-players.mjs",
+    "test:touch": "node --test test/touch-gestures.mjs",
     "test:multiplayer-browser": "node --test test/multiplayer-browser.mjs"
   },
   "dependencies": {

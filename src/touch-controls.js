@@ -1,7 +1,10 @@
+import { installTouchGestureGuard } from './touch-gestures.js';
+
 /** Independent pointer ownership lets two thumbs move/look while another finger acts. */
 export class TouchControls {
   constructor({ canvas, root, onMove, onLook, onHold, onAction }) {
     Object.assign(this, { canvas, root, onMove, onLook, onHold, onAction });
+    installTouchGestureGuard();
     this.enabled = false;
     this.pointers = new Map();
     this.sprinting = false;

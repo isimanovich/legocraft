@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import * as THREE from 'three';
-import { BLOCK, PLACEABLE } from '../src/world.js';
+import { BLOCK, PLACEABLE, DEFAULT_HOTBAR } from '../src/world.js';
+import { SAVE_FORMAT_VERSION, encodeTerrain, decodeTerrain, validateSaveVersion } from '../src/save-format.js';
 import { ENEMY_TYPES, findSpawnSpot, BLAST_RADIUS, BLAST_BLOCK_RADIUS, typeHeight } from '../src/enemies.js';
 import { ANIMAL_TYPES } from '../src/animals.js';
 import { Ragdolls, CARRY_DISTANCE } from '../src/ragdoll.js';
@@ -11,18 +12,69 @@ import { createWorld, createEnemy, createAnimal } from './headless.mjs';
 const id = () => randomUUID();
 const xyz = p => ({ x: p.x, y: p.y, z: p.z });
 const cleanName = (name, fallback = 'Builder') => typeof name === 'string' ? name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 20) || fallback : fallback;
+const cleanWorldName = name => typeof name === 'string' ? name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) || 'My world' : 'My world';
 const overlaps = (x, y, z, e) => x + 1 > e.pos.x - e.halfW && x < e.pos.x + e.halfW && y + 1 > e.pos.y && y < e.pos.y + e.height && z + 1 > e.pos.z - e.halfW && z < e.pos.z + e.halfW;
 const falloff = (distance, radius) => distance >= radius ? 0 : Math.max(0.25, 1 - distance / radius);
 const pose = p => ({ ...xyz(p.pos), yaw: p.yaw, pitch: p.pitch });
+const clientIdPattern = /^[a-f0-9-]{16,64}$/i;
+const finite = (v, fallback, min = -1e9, max = 1e9) => Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+const cleanHotbar = items => Array.isArray(items) && items.length === DEFAULT_HOTBAR.length && items.every(item => item === 'sword' || PLACEABLE.includes(item)) ? [...items] : [...DEFAULT_HOTBAR];
+const cleanSlot = slot => Number.isInteger(slot) && slot >= 0 && slot < DEFAULT_HOTBAR.length ? slot : 0;
+const validVector = value => value && [value.x, value.y, value.z].every(v => Number.isFinite(v) && Math.abs(v) <= 1e6);
+const restoreVector = (target, value) => { if (validVector(value)) target.copy(value); };
+const enemyNumbers = ['hp', 'maxHp', 'dmg', 'speed', 'wanderTimer', 'stuckTimer', 'jumpCooldown', 'detourTimer', 'detourSide', 'detourStreak', 'freeTimer', 'pathIdx', 'repathTimer', 'attackCooldown', 'windup', 'flash', 'walkPhase', 'facing', 'fuse'];
+const animalNumbers = ['facing', 'timer', 'walkPhase', 'jumpCooldown'];
+const bodyNumbers = ['pinTime', 'airTime', 'age', 'restTime'];
+const fields = (object, names) => Object.fromEntries(names.map(key => [key, object[key]]));
+const restoreNumbers = (target, source, names) => { for (const key of names) target[key] = finite(source[key], target[key]); };
+const boundedList = (value, max, name) => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > max || value.some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error(`Invalid saved ${name}.`);
+  return value;
+};
+const validClientId = value => typeof value === 'string' && clientIdPattern.test(value);
+const validateKind = (registry, kind, label) => {
+  if (typeof kind !== 'string' || !kind) throw new Error(`Invalid saved ${label} kind.`);
+  if (!Object.hasOwn(registry, kind)) throw Object.assign(new Error(`Saved ${label} ${kind.slice(0, 32)} needs a newer game version.`), { code: 'UNSUPPORTED_SAVE_FORMAT' });
+};
+
+/** Validate actor collections before choosing a primary save or its backup. */
+export function validateRoomActors(saved) {
+  const collections = {
+    profiles: boundedList(saved.profiles, 256, 'player profiles'), enemies: boundedList(saved.enemies, 128, 'enemies'),
+    animals: boundedList(saved.animals, 12, 'animals'), bodies: boundedList(saved.bodies, 16, 'bodies'), projectiles: boundedList(saved.projectiles, 128, 'projectiles'),
+  };
+  const profileIds = new Set();
+  for (const profile of collections.profiles) {
+    if (!validClientId(profile.clientId) || !validVector(profile.pos) || profileIds.has(profile.clientId)) throw new Error('Invalid saved player profile.');
+    profileIds.add(profile.clientId);
+  }
+  for (const enemy of collections.enemies) { validateKind(ENEMY_TYPES, enemy.kind, 'enemy'); if (!validVector(enemy.pos)) throw new Error('Invalid saved enemy position.'); }
+  for (const animal of collections.animals) { validateKind(ANIMAL_TYPES, animal.kind, 'animal'); if (!validVector(animal.pos)) throw new Error('Invalid saved animal position.'); }
+  for (const body of collections.bodies) {
+    validateKind(ENEMY_TYPES, body.kind, 'body');
+    if (!ENEMY_TYPES[body.kind].ragdoll || !validVector(body.feet) || !validVector(body.com)) throw new Error('Invalid saved body.');
+  }
+  for (const projectile of collections.projectiles) if (!validVector(projectile.pos) || !validVector(projectile.vel)) throw new Error('Invalid saved projectile.');
+  return collections;
+}
 
 export class Room {
   constructor(code, gameMode, send, dirty, saved = {}) {
+    const formatVersion = validateSaveVersion(saved);
+    const actors = validateRoomActors(saved);
     this.code = code;
+    this.name = cleanWorldName(saved.name);
     this.gameMode = gameMode;
+    this.createdAt = finite(saved.createdAt, Date.now(), 0, Number.MAX_SAFE_INTEGER);
+    this.updatedAt = finite(saved.updatedAt, this.createdAt, 0, Number.MAX_SAFE_INTEGER);
+    this.revision = finite(saved.revision, 0, 0, Number.MAX_SAFE_INTEGER);
     this.world = createWorld(saved.seed ?? randomInt(1, 1_000_000));
+    if (formatVersion >= 2) this.world.data.set(decodeTerrain(saved.terrain));
     this.send = send;
-    this.dirty = dirty;
+    this.dirty = () => { this.updatedAt = Date.now(); this.revision++; dirty(); };
     this.players = new Map();
+    this.profiles = new Map();
     this.hostId = null;
     this.emptySince = Date.now();
     this.blocks = new Map();
@@ -35,25 +87,113 @@ export class Room {
     this.score = saved.score ?? 0;
     this.kills = saved.kills ?? 0;
     this.wave = saved.wave ?? 1;
-    this.remaining = gameMode === 'wave' ? 3 + Math.floor(this.wave * 1.5) : 0;
-    this.intermission = 0;
-    this.spawnTimer = 1.5;
-    for (const [x, y, z, type] of saved.blocks ?? []) this.edit(x, y, z, type, false);
+    this.remaining = finite(saved.remaining, gameMode === 'wave' ? 3 + Math.floor(this.wave * 1.5) : 0, 0, 1e6);
+    this.intermission = finite(saved.intermission, 0, 0, 60);
+    this.spawnTimer = finite(saved.spawnTimer, 1.5, -60, 60);
+    this.spawnCursor.angle = finite(saved.spawnCursor?.angle, this.spawnCursor.angle);
+    this.saveElapsed = 0;
+    for (const [x, y, z, type] of saved.blocks ?? []) {
+      if (formatVersion < 2) this.edit(x, y, z, type, false);
+      else this.blocks.set(`${x},${y},${z}`, [x, y, z, type]);
+    }
+    for (const profile of actors.profiles) {
+      this.profiles.set(profile.clientId, { ...profile, hotbar: cleanHotbar(profile.hotbar), slot: cleanSlot(profile.slot) });
+    }
+    for (const data of actors.enemies) {
+      const e = createEnemy(data.kind, data.pos.x, data.pos.y, data.pos.z, this.wave);
+      e.id = typeof data.id === 'string' ? data.id : id();
+      restoreNumbers(e, data, enemyNumbers);
+      for (const key of ['vel', 'wanderDir', 'detourDir']) restoreVector(e[key], data[key]);
+      if (['wander', 'chase', 'attack', 'windup'].includes(data.state)) e.state = data.state;
+      for (const key of ['onGround', 'blinkOn', 'blinkPending']) if (typeof data[key] === 'boolean') e[key] = data[key];
+      e.path = Array.isArray(data.path) && data.path.length <= 2048 && data.path.every(validVector) ? data.path.map(xyz) : null;
+      e.group.rotation.y = e.facing;
+      this.enemies.push(e);
+    }
+    for (const data of actors.animals) {
+      const a = createAnimal(data.kind, data.pos.x, data.pos.y, data.pos.z);
+      a.id = typeof data.id === 'string' ? data.id : id();
+      restoreNumbers(a, data, animalNumbers);
+      restoreVector(a.vel, data.vel); restoreVector(a.dir, data.dir);
+      if (['idle', 'walk', 'flee', 'sit'].includes(data.state)) a.state = data.state;
+      a.onGround = data.onGround === true;
+      a.group.position.copy(a.pos); a.group.rotation.y = a.facing;
+      this.animals.push(a);
+    }
+    for (const data of actors.bodies) {
+      const e = createEnemy(data.kind, data.feet.x, data.feet.y, data.feet.z);
+      e.id = typeof data.id === 'string' ? data.id : id();
+      const b = this.addBody(e);
+      for (const key of ['com', 'feet', 'vel', 'prevVel', 'angVel', 'tipAxis', 'grabLocal']) restoreVector(b[key], data[key]);
+      if (Array.isArray(data.q) && data.q.length === 4 && data.q.every(Number.isFinite) && Math.hypot(...data.q) > 0.01) b.q.fromArray(data.q).normalize();
+      b.up.set(0, 1, 0).applyQuaternion(b.q);
+      restoreNumbers(b, data, bodyNumbers);
+      for (const key of ['pinned', 'onGround', 'swimming']) if (typeof data[key] === 'boolean') b[key] = data[key];
+      // A server restart disconnects every hand; bodies retain their pose and
+      // momentum, but nobody remains attached to an offline player.
+      b.carried = false; b.carrying = null;
+      if (data.carried) { b.pinned = false; b.airTime = Math.max(1, b.airTime); }
+      b.name = cleanName(data.name, '').slice(0, 16);
+      if (Array.isArray(data.limbs) && data.limbs.length === b.limbs.length) data.limbs.forEach((savedLimb, i) => {
+        const limb = b.limbs[i];
+        if (!savedLimb || typeof savedLimb !== 'object') return;
+        restoreNumbers(limb, savedLimb, ['vx', 'vz']);
+        limb.rest.x = finite(savedLimb.rest?.x, limb.rest.x, -Math.PI, Math.PI);
+        limb.rest.z = finite(savedLimb.rest?.z, limb.rest.z, -Math.PI, Math.PI);
+        limb.node.rotation.x = finite(savedLimb.x, 0, -limb.limit, limb.limit);
+        limb.node.rotation.z = finite(savedLimb.z, 0, -limb.limit, limb.limit);
+      });
+      b.sync();
+    }
+    for (const data of actors.projectiles) {
+      this.projectiles.push({ id: typeof data.id === 'string' ? data.id : id(), ownerId: typeof data.ownerId === 'string' ? data.ownerId : null, pos: new THREE.Vector3().copy(data.pos), vel: new THREE.Vector3().copy(data.vel), life: finite(data.life, TOMATO_LIFE, 0, TOMATO_LIFE) });
+    }
     this.pendingBlocks.clear();
   }
 
   broadcast(packet) { for (const p of this.players.values()) this.send(p.socket, packet); }
-  worldInfo() { return { seed: this.world.seed, sizeX: this.world.sx, sizeY: this.world.sy, sizeZ: this.world.sz }; }
-  persisted() { return { code: this.code, gameMode: this.gameMode, seed: this.world.seed, blocks: [...this.blocks.values()], score: this.score, kills: this.kills, wave: this.wave }; }
+  worldInfo() { return { code: this.code, name: this.name, gameMode: this.gameMode, createdAt: this.createdAt, updatedAt: this.updatedAt, revision: this.revision, seed: this.world.seed, sizeX: this.world.sx, sizeY: this.world.sy, sizeZ: this.world.sz, terrain: encodeTerrain(this.world.data) }; }
+  playerProfile(p) { return { clientId: p.clientId, name: p.name, pos: xyz(p.pos), yaw: p.yaw, pitch: p.pitch, health: p.health, regenDelay: p.regenDelay, tomatoes: p.tomatoes, hotbar: [...p.hotbar], slot: p.slot, updatedAt: Date.now() }; }
+  persisted() {
+    for (const p of this.players.values()) this.profiles.set(p.clientId, this.playerProfile(p));
+    return { formatVersion: SAVE_FORMAT_VERSION, code: this.code, name: this.name, gameMode: this.gameMode, createdAt: this.createdAt, updatedAt: this.updatedAt, revision: this.revision,
+      seed: this.world.seed, terrain: encodeTerrain(this.world.data), blocks: [...this.blocks.values()], score: this.score, kills: this.kills, wave: this.wave,
+      remaining: this.remaining, intermission: this.intermission, spawnTimer: this.spawnTimer, spawnCursor: { ...this.spawnCursor }, profiles: [...this.profiles.values()],
+      enemies: this.enemies.map(e => ({ id: e.id, kind: e.typeKey, pos: xyz(e.pos), vel: xyz(e.vel), wanderDir: xyz(e.wanderDir), detourDir: xyz(e.detourDir), ...fields(e, enemyNumbers), state: e.state, onGround: e.onGround, blinkOn: e.blinkOn, blinkPending: e.blinkPending, path: e.path?.map(xyz) ?? null })),
+      animals: this.animals.map(a => ({ id: a.id, kind: a.kind, pos: xyz(a.pos), vel: xyz(a.vel), dir: xyz(a.dir), ...fields(a, animalNumbers), state: a.state, onGround: a.onGround })),
+      bodies: this.ragdolls.bodies.map(b => ({ id: b.id, kind: b.kind ?? 'stalker', name: b.name, ...Object.fromEntries(['com', 'feet', 'vel', 'prevVel', 'angVel', 'tipAxis', 'grabLocal'].map(key => [key, xyz(b[key])])), q: b.q.toArray(), ...fields(b, bodyNumbers), carried: b.carried, pinned: b.pinned, onGround: b.onGround, swimming: b.swimming,
+        limbs: b.limbs.map(l => ({ x: l.node.rotation.x, z: l.node.rotation.z, vx: l.vx, vz: l.vz, rest: { ...l.rest } })) })),
+      projectiles: this.projectiles.map(t => ({ id: t.id, ownerId: t.ownerId, pos: xyz(t.pos), vel: xyz(t.vel), life: t.life })) };
+  }
 
-  addPlayer(socket, name) {
-    const player = { id: id(), name: cleanName(name), socket, pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: Math.PI, pitch: 0,
+  addPlayer(socket, name, clientId) {
+    if (!validClientId(clientId) || [...this.players.values()].some(p => p.clientId === clientId)) clientId = id();
+    const profile = this.profiles.get(clientId);
+    if (!profile && this.profiles.size >= 256) {
+      const active = new Set([...this.players.values()].map(p => p.clientId));
+      const oldest = [...this.profiles.values()].filter(p => !active.has(p.clientId)).sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))[0];
+      if (!oldest) throw new Error('This world has reached its player profile limit.');
+      this.profiles.delete(oldest.clientId);
+    }
+    const player = { id: id(), clientId, name: cleanName(name, profile?.name), socket, pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: Math.PI, pitch: 0,
       halfW: 0.3, height: 1.8, health: 100, maxHealth: 100, regenDelay: 0, tomatoes: this.gameMode === 'build' ? TOMATO_MAX : TOMATOES_PER_WAVE,
+      hotbar: cleanHotbar(profile?.hotbar), slot: cleanSlot(profile?.slot),
       active: true, carryId: null, lastPose: Date.now(), nextAttack: 0, nextPlace: 0, nextThrow: 0, nextSpawn: 0, nextRespawn: 0 };
     this.spawnPlayer(player);
+    if (profile) {
+      const pos = profile.pos;
+      if (validVector(pos) && pos.x >= player.halfW && pos.x <= this.world.sx - player.halfW && pos.z >= player.halfW && pos.z <= this.world.sz - player.halfW && pos.y >= 0 && pos.y <= this.world.sy + 8 && !boxCollides(this.world, pos.x, pos.y + 0.01, pos.z, player.halfW * 0.98, player.height - 0.02) && [...this.players.values()].every(other => other.pos.distanceTo(new THREE.Vector3().copy(pos)) > 0.8)) player.pos.copy(pos);
+      player.yaw = finite(profile.yaw, Math.PI, -1e6, 1e6);
+      player.pitch = finite(profile.pitch, 0, -Math.PI / 2, Math.PI / 2);
+      player.health = finite(profile.health, 100, 0, 100);
+      player.regenDelay = finite(profile.regenDelay, 0, 0, 5);
+      player.tomatoes = finite(profile.tomatoes, player.tomatoes, 0, TOMATO_MAX);
+    }
     this.players.set(player.id, player);
+    this.profiles.set(clientId, this.playerProfile(player));
     this.hostId ||= player.id;
     this.emptySince = null;
+    this.dirty();
     return player;
   }
 
@@ -97,9 +237,11 @@ export class Room {
 
   removePlayer(p) {
     this.drop(p);
+    this.profiles.set(p.clientId, this.playerProfile(p));
     this.players.delete(p.id);
     if (this.hostId === p.id) this.hostId = this.players.keys().next().value ?? null;
     if (!this.players.size) this.emptySince = Date.now();
+    this.dirty();
     this.broadcast(this.snapshot());
   }
 
@@ -135,6 +277,8 @@ export class Room {
     p.yaw = yaw;
     p.pitch = pitch;
     p.active = msg.active !== false;
+    if (msg.hotbar !== undefined) p.hotbar = cleanHotbar(msg.hotbar);
+    if (msg.slot !== undefined) p.slot = cleanSlot(msg.slot);
     p.lastPose = now;
   }
 
@@ -169,6 +313,7 @@ export class Room {
       this.spawnPlayer(p);
       p.tomatoes = this.gameMode === 'build' ? TOMATO_MAX : TOMATOES_PER_WAVE;
       this.correction(p);
+      this.dirty();
       return;
     }
     if (p.health <= 0) return;
@@ -216,6 +361,7 @@ export class Room {
       const velocity = direction.multiplyScalar(TOMATO_SPEED).add(p.vel);
       velocity.y += 1.5;
       this.projectiles.push({ id: id(), ownerId: p.id, pos: origin, vel: velocity, life: TOMATO_LIFE });
+      this.dirty();
     } else if (msg.action === 'spawn' && now >= p.nextSpawn) {
       p.nextSpawn = now + 700;
       this.spawnAhead(p, msg.kind);
@@ -246,6 +392,7 @@ export class Room {
         e.vel.copy(e.pos).sub(p.pos).setY(0).normalize().multiplyScalar(2);
         this.addBody(e);
       } else this.enemies.push(e);
+      this.dirty();
       return;
     }
   }
@@ -253,6 +400,7 @@ export class Room {
   addBody(enemy) {
     const body = this.ragdolls.add(enemy);
     body.id = enemy.id;
+    body.kind = enemy.typeKey;
     body.carrying = null;
     return body;
   }
@@ -287,6 +435,7 @@ export class Room {
       if (!visible) return;
     }
     this.ragdolls.setName(body, cleanName(msg.name, '').slice(0, 16));
+    this.dirty();
   }
 
   killEnemy(enemy, score = true) {
@@ -354,6 +503,10 @@ export class Room {
 
   tick(dt) {
     if (!this.players.size) return;
+    // This also captures movement, health regeneration and running simulations;
+    // the store batches these notifications into its periodic disk checkpoint.
+    this.saveElapsed += dt;
+    if (this.saveElapsed >= 1) { this.saveElapsed = 0; this.dirty(); }
     const living = [...this.players.values()].filter(p => p.health > 0);
     for (const p of living) {
       p.regenDelay -= dt;
@@ -417,9 +570,9 @@ export class Room {
     if (this.pendingBlocks.size) { this.broadcast({ type: 'blocks', blocks: [...this.pendingBlocks.values()] }); this.pendingBlocks.clear(); }
   }
   snapshot() {
-    return { type: 'state', roomCode: this.code, hostId: this.hostId, gameMode: this.gameMode,
+    return { type: 'state', roomCode: this.code, worldName: this.name, hostId: this.hostId, gameMode: this.gameMode,
       wave: this.wave, score: this.score, kills: this.kills, remaining: this.remaining, intermission: Math.max(0, this.intermission),
-      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, ...pose(p), health: p.health, maxHealth: 100, tomatoes: p.tomatoes, carryId: p.carryId, active: p.active })),
+      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, ...pose(p), health: p.health, maxHealth: 100, tomatoes: p.tomatoes, hotbar: [...p.hotbar], slot: p.slot, carryId: p.carryId, active: p.active })),
       enemies: this.enemies.map(e => ({ id: e.id, kind: e.typeKey, ...xyz(e.pos), facing: e.facing, hp: e.hp, maxHp: e.maxHp, state: e.state, windup: e.windup, fuse: e.fuse, flash: e.flash })),
       animals: this.animals.map(a => ({ id: a.id, kind: a.kind, ...xyz(a.pos), facing: a.facing, state: a.state, walkPhase: a.walkPhase })),
       projectiles: this.projectiles.map(t => ({ id: t.id, ...xyz(t.pos) })),
@@ -435,6 +588,7 @@ export class Room {
     this.enemies.length = 0; this.animals.length = 0; this.projectiles.length = 0;
     this.score = 0; this.kills = 0; this.wave = 1; this.intermission = 0; this.spawnTimer = 1.5;
     this.remaining = this.gameMode === 'wave' ? 4 : 0;
+    this.profiles.clear();
     for (const p of this.players.values()) { this.spawnPlayer(p); p.tomatoes = this.gameMode === 'wave' ? TOMATOES_PER_WAVE : TOMATO_MAX; }
     this.broadcast({ type: 'world', world: this.worldInfo(), blocks: [], state: this.snapshot() });
     this.dirty();

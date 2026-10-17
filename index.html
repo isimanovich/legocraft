@@ -100,6 +100,25 @@
   #room-join { background: #36aebf; box-shadow: 0 4px 0 #227783; }
   #room-code { text-transform: uppercase; letter-spacing: 3px; }
   #room-error { min-height: 20px; margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: #ffd77c; overflow-wrap: anywhere; }
+  #world-name-field { width: min(520px, 100%); text-align: left; margin: 0 0 16px; }
+  #saved-worlds { width: min(520px, 100%); box-sizing: border-box; margin-top: 20px; padding: 16px 18px; border: 1px solid rgba(255,255,255,.2); border-radius: 14px; background: rgba(0,0,0,.35); text-align: left; }
+  .saved-worlds-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+  .saved-worlds-heading h2 { margin: 0; font-size: 19px; color: var(--yellow); }
+  #refresh-worlds { min-height: 44px; margin: 0; padding: 9px 14px; font-size: 14px; }
+  #saved-worlds-status { margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: #dbe8ed; overflow-wrap: anywhere; }
+  #saved-worlds-status:empty { display: none; }
+  .saved-world-group { margin-top: 16px; }
+  .saved-world-group h3 { margin: 0 0 8px; font-size: 14px; }
+  .saved-world-list { display: grid; gap: 10px; }
+  .saved-world-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; background: rgba(5,19,29,.6); }
+  .saved-world-info { flex: 1 1 150px; min-width: 0; }
+  .saved-world-title { display: block; font-size: 15px; font-weight: 800; overflow-wrap: anywhere; }
+  .saved-world-meta { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: #dbe8ed; overflow-wrap: anywhere; }
+  .saved-world-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .saved-world-actions .menu-btn { min-height: 44px; margin: 0; padding: 10px 14px; font-size: 14px; }
+  #save-world { margin-top: 18px; }
+  #save-status { max-width: min(520px, 100%); margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: #dbe8ed; overflow-wrap: anywhere; }
+  #save-status:empty { display: none; }
   #room-reset, #room-leave { margin-top: 14px; }
   #room-leave { background: #e9edf0; box-shadow: 0 4px 0 #9aa8b1; }
   #session-status { position: absolute; right: 16px; top: 144px; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 7px 11px; border: 1px solid rgba(255,255,255,.24); border-radius: 7px; background: rgba(5,19,29,.76); font-size: 12px; font-weight: 700; line-height: 1.4; }
@@ -234,7 +253,7 @@
     .spawn-btn { padding: 10px 12px; min-height: 44px; }
     #death .title { font-size: 32px; }
     #death .score { font-size: 18px; }
-    #multiplayer-panel { padding: 14px; }
+    #multiplayer-panel, #saved-worlds { padding: 14px; }
     .room-actions { gap: 12px; }
     .session-btn { padding: 10px 20px; }
   }
@@ -379,6 +398,9 @@
       <div><kbd>Esc</kbd></div><div>Pause</div>
     </div>
     <div class="cta" id="start-cta">Generating world&hellip;</div>
+    <label class="room-field" id="world-name-field" for="world-name">New world name
+      <input id="world-name" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="My world" />
+    </label>
     <div id="mode-pick" class="hidden">
       <button type="button" class="menu-btn mode-btn" id="mode-wave">Survive the waves<small>Minifigs attack in ever harder waves. Score, kills, tomatoes.</small></button>
       <button type="button" class="menu-btn mode-btn alt" id="mode-build">Free build<small>No enemies. Just you, the bricks and the world.</small></button>
@@ -404,6 +426,23 @@
       </div>
       <p id="room-error" role="status" aria-live="polite" aria-atomic="true"></p>
     </section>
+    <section id="saved-worlds" aria-labelledby="saved-worlds-heading">
+      <div class="saved-worlds-heading">
+        <h2 id="saved-worlds-heading">Saved worlds</h2>
+        <button type="button" class="menu-btn" id="refresh-worlds">Refresh</button>
+      </div>
+      <p id="saved-worlds-status" role="status" aria-live="polite" aria-atomic="true">Loading saved worlds&hellip;</p>
+      <div class="saved-world-group" id="solo-world-saves">
+        <h3>On this device</h3>
+        <div class="saved-world-list" id="solo-world-list" role="list" aria-label="Solo saved worlds"></div>
+      </div>
+      <div class="saved-world-group" id="server-world-saves">
+        <h3>On this server</h3>
+        <div class="saved-world-list" id="server-world-list" role="list" aria-label="Shared saved worlds"></div>
+      </div>
+    </section>
+    <button type="button" class="menu-btn" id="save-world" hidden>Save world now</button>
+    <p id="save-status" role="status" aria-live="polite" aria-atomic="true"></p>
     <button type="button" class="menu-btn hidden" id="new-game">New game &mdash; fresh world</button>
     <button type="button" class="menu-btn" id="room-reset" hidden>New world for everyone</button>
     <button type="button" class="menu-btn" id="room-leave" hidden>Leave room</button>

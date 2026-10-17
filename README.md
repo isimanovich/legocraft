@@ -27,16 +27,17 @@ The title screen lets you choose **Solo** or **Play together**, as well as
 **Survive the waves** (minifigs
 attack in ever harder waves; score, kills, tomatoes) or **Free build** (no
 enemies, no health bar, a full stock of tomatoes for demolition; just you and
-the bricks). `Esc` pauses solo play; the pause screen has a **New game** button that
-throws the world away, generates a fresh one and asks for a mode again. Dying
+the bricks). Give a new world a name so it is easy to find again. `Esc` pauses
+solo play; **Save world now** saves it, and **New game — fresh world** starts a
+different world. Use **Saved worlds** to resume an earlier game. Dying
 and pressing `R` restarts in the same world and mode.
 
 ### Play together
 
 1. Open the same server address on every laptop, iPad, or iPhone. Use the main
    Wi-Fi network rather than a guest network with client isolation enabled.
-2. Choose **Play together**, enter a name, select **Survive the waves** or
-   **Free build**, and choose **Create room**.
+2. Choose **Play together**, enter your name and a new world name, select
+   **Survive the waves** or **Free build**, and choose **Create room**.
 3. Share the six-character room code shown in the game. Friends choose
    **Play together**, enter their name and that code, and choose **Join room**.
 
@@ -53,13 +54,78 @@ leaves, another player becomes the room host. Use **Leave room** to return to
 solo play. A room code identifies a game on this server; it is not an internet
 invitation or a password.
 
-The server saves room seeds, terrain edits, score, kills, and wave progress in
-`.local-data/rooms.json` by default. Set `DATA_DIR` to a writable, persistent
-directory to move these saves. Players, health, creatures, bodies, and projectiles
-are temporary; a server restart restores the saved terrain and progress rather
-than an exact instant of combat, restarting the current wave with its full enemy
-roster. Empty rooms expire after 24 hours. Back up the data directory to keep
-your worlds, and keep it when updating the code.
+### Save and resume worlds
+
+On the title screen, **Saved worlds** lists Solo games **On this device** and
+shared games **On this server**. Choose **Resume** beside a world to continue.
+Shared worlds keep their room codes, so friends can also join by code after a
+server restart. Empty shared worlds stay saved and pause until someone rejoins;
+they no longer expire after 24 hours. The default server limit is 16 saved rooms,
+including empty ones; the server does not delete old worlds to make space.
+
+Shared worlds save automatically every 15 seconds, when a player disconnects,
+and during a normal server shutdown. Use **Save world now** on the pause screen
+before stopping the Pi or leaving an important build. A save includes the full
+terrain, mode, score, wave timing, enemies, animals, projectiles, and named fallen
+bodies. Returning from the same browser restores your player position, health,
+tomatoes, and hotbar. A carried body is dropped when its player leaves. The
+browser remembers a player identifier; this is a convenience for a trusted LAN,
+not an account or password. Clearing browser storage or using a different browser
+creates a new player profile in the same shared world.
+
+The Pi stores shared saves in `.local-data/rooms.json`. Set `DATA_DIR` to another
+writable, persistent directory if desired. No database or extra service is
+required: the existing Node.js server writes the files. Keep this directory on
+the Pi's SD card or a mounted USB drive, not in `/tmp`. Normal server or Pi
+reboots preserve it. A power cut can lose changes since the last completed save;
+backups on another device also protect against SD-card failure.
+
+Solo saves use the browser's IndexedDB storage on the current device. They
+survive refreshing the page and restarting the browser, but are not copied to
+the Pi or shared with other devices. Solo games save automatically every 15
+seconds and when paused; saving when the browser goes into the background is best
+effort because the browser can suspend the page. **Save world now** also works
+for Solo. **New game — fresh world** saves the previous world first and keeps
+you in it if that save fails. Up to 20 Solo worlds can be stored. Choose
+**Delete**, then **Confirm delete**, beside an unwanted device save to free
+space. If saving fails, the saved-world list is also available while paused so
+you can remove an older save and retry.
+
+Use the same server address and port when returning: `http://pi:8080` and
+`http://pi` have separate browser storage. Clearing
+site data removes Solo saves. Browser private modes or storage restrictions can
+prevent saving, and the browser may evict site data when device storage runs
+low. Check the save status before relying on a Solo save. Solo has no export or
+import screen; use a shared world on the Pi for games you want to back up as
+files.
+
+Each shared-world entry has a **Backup** link that downloads that world as a
+versioned JSON file. Keep it on another device. To restore one of these downloads
+into a new, empty `DATA_DIR`, stop the server and copy the download into that
+directory as `rooms.json` before starting it. It contains only that one world:
+replacing an existing `rooms.json` would replace the whole catalog. Preserve the
+current data directory first. To back up or restore all worlds together, use the
+full-directory procedure under **Host on a Raspberry Pi** below.
+
+Saves have an explicit format version. This release upgrades earlier room saves
+while keeping the original as `rooms.json.v1-<timestamp>-<id>.bak`. Their terrain
+and progress survive; player and creature state that the old format never stored
+starts with defaults on that first upgrade. Saves are written to a temporary
+file, synced, and atomically replaced, with the previous valid file retained as
+`rooms.json.bak`. If the main file is damaged, the server
+can recover from that backup while preserving the damaged file for inspection.
+Full terrain snapshots mean a later terrain-generator change does not reshape
+an existing build. The saved block palette keeps block types identifiable across
+format migrations. New features that only add optional fields can supply
+defaults; changes to existing save structure need an explicit migration. A newer,
+unsupported save version is refused rather than overwritten. Keep a backup before
+every code update; no
+format policy can make every future change automatically compatible.
+
+**New world for everyone** intentionally resets a shared world. Before the reset,
+the server keeps a full catalog checkpoint as
+`rooms.json.before-reset-<timestamp>-<id>.bak` in `DATA_DIR`. This is a recovery
+file, not another entry in the saved-world list.
 
 Solo still works from a plain static web server, including the earlier Python
 or Nginx setup. **Play together requires the Node.js server** and its WebSocket
@@ -299,7 +365,9 @@ In that file, replace every `YOUR_PI_USERNAME` with the username you created
 during OS installation. Change `/home/YOUR_PI_USERNAME/legocraft` if your
 checkout is somewhere else, and check that `/usr/bin/node` matches
 `command -v node`. Keep `DATA_DIR` pointing at the writable `.local-data`
-directory. Then install and start it:
+directory, or use an absolute path on a persistent USB drive mounted before the
+service starts. The Pi 3 needs no additional database package for saved worlds.
+Then install and start it:
 
 ```bash
 sudo install -m 644 /tmp/legocraft.service /etc/systemd/system/legocraft.service
@@ -319,11 +387,14 @@ sudo systemctl restart legocraft
 
 ### Update after a commit to main
 
-Stop the server so its last saved room state is written before replacing code.
-Run these commands as the account that owns the checkout:
+Stop the server so its last saved room state is written, then back up the whole
+data directory before replacing code. Run these commands as the account that
+owns the checkout:
 
 ```bash
 sudo systemctl stop legocraft
+backup_file="$HOME/legocraft-data-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+tar -C "$HOME/legocraft" -czf "$backup_file" .local-data
 git -C "$HOME/legocraft" pull --ff-only origin main
 cd "$HOME/legocraft"
 npm ci
@@ -335,6 +406,29 @@ Check each command succeeds before continuing. If the Git pull refuses because
 you have local changes, preserve those changes before updating. Do not delete
 `.local-data`; reload the game on all devices after the update. GitHub pushes do
 not automatically update the Pi; run these commands to deploy a new commit.
+If you changed `DATA_DIR`, back up that directory instead. Copy backups to your
+laptop or another disk regularly; an archive on the same SD card cannot protect
+against a failed card.
+
+### Restore a backup
+
+Stop the service before restoring files. Keep the current data directory so you
+can undo the restore, then extract a trusted backup made with the command above:
+
+```bash
+sudo systemctl stop legocraft
+mv "$HOME/legocraft/.local-data" "$HOME/legocraft-data-before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+tar -C "$HOME/legocraft" -xzf /path/to/legocraft-data-BACKUP_TIME.tar.gz
+sudo systemctl start legocraft
+sudo journalctl -u legocraft -n 50 --no-pager
+```
+
+Substitute the actual backup path. For a custom `DATA_DIR`, restore that path
+instead. Restore using a game version that understands the saved format: rolling
+back code does not roll back a save that a newer version already migrated. Keep
+the pre-update archive with the corresponding Git commit. If startup reports an
+unsupported save version, use matching newer code or restore the older backup;
+do not delete the save to make the error disappear.
 
 ### Keep an existing Nginx address on port 80
 
@@ -377,6 +471,9 @@ deploy/           example Raspberry Pi systemd service and Nginx proxy
 vendor/three.module.js  three.js r160 (MIT)
 src/main.js       game loop, input, HUD, spawning, combat, carrying
 src/multiplayer.js WebSocket session, room messages, and connection state
+src/save-format.js versioned terrain encoding shared by browser and server
+src/solo-saves.js Solo snapshots and device-local IndexedDB save library
+server/persistence.mjs atomic save files, migration backups, and recovery
 src/remote-players.js   other players' minifig avatars and movement
 src/network-entities.js replicated enemies, animals, bodies, and projectiles
 src/world.js      voxel storage, terrain gen (lakes, trees, structures), chunk meshing (with studs), DDA raycast
@@ -406,14 +503,20 @@ flat Minecraft look), structure counts in `World.placeStructures`, `ENEMY_TYPES`
 ## Validation
 
 Install dependencies with `npm ci`, then run the server integration tests,
-headless gameplay suite, remote-player rendering, and touch-gesture checks:
+headless gameplay suite, remote-player rendering, touch-gesture checks, and
+Solo snapshot checks:
 
 ```bash
 npm test
 ```
 
-`npm run test:server`, `npm run test:smoke`, `npm run test:remote`, and
-`npm run test:touch` run the suites separately.
+`npm run test:server`, `npm run test:smoke`, `npm run test:remote`,
+`npm run test:touch`, and `npm run test:saves` run the suites separately.
+Server checks cover full-state restart recovery, older saves, backup recovery,
+and refusal to overwrite unsupported saves. Solo checks cover snapshot restoration
+and incompatible or damaged saves. The actual IndexedDB browser check skips
+unless `PLAYWRIGHT_MODULE` is provided.
+
 The browser suite below is an additional check; physical iPad/iPhone Safari
 testing remains useful for touch, audio, and browser lifecycle behavior.
 
@@ -429,10 +532,16 @@ PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
   CHROMIUM_PATH=/usr/bin/chromium node --test test/browser.mjs
 PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
   CHROMIUM_PATH=/usr/bin/chromium node --test test/multiplayer-browser.mjs
+PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
+  CHROMIUM_PATH=/usr/bin/chromium node --test test/solo-saves.mjs
+PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
+  CHROMIUM_PATH=/usr/bin/chromium node --test test/saves-browser.mjs
 ```
 
 With Playwright and its Chromium already installed in your own development setup,
-`npm run test:browser` and `npm run test:multiplayer-browser` also work. The
-multiplayer suite opens separate browser sessions against the actual Node
-server to check the shared-room workflow. Chromium's device emulation does not
+`npm run test:browser`, `npm run test:multiplayer-browser`, and
+`npm run test:saves-browser` also work. The multiplayer suite opens separate
+browser sessions against the actual Node
+server to check the shared-room workflow. The saves browser suite checks the
+saved-world menus and resume workflow. Chromium's device emulation does not
 replace testing Safari and touch/audio behavior on a physical iPad or iPhone.

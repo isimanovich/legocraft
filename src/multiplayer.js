@@ -9,6 +9,14 @@ export class MultiplayerSession {
     this.roomCode = null;
     this.hostId = null;
     this.poseElapsed = 0;
+    this.getInventory = () => ({});
+    this.worldName = '';
+    // This is a reconnect identity for a trusted home network, not an account.
+    try { this.clientId = localStorage.getItem('legocraft-player-id'); } catch { /* Optional storage. */ }
+    if (!/^[a-f0-9-]{16,64}$/i.test(this.clientId || '')) {
+      this.clientId = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
+      try { localStorage.setItem('legocraft-player-id', this.clientId); } catch { /* Reconnect works within this tab. */ }
+    }
   }
 
   connect(request) {
@@ -29,7 +37,7 @@ export class MultiplayerSession {
         fail('The multiplayer server did not respond. Start the Node server on the Pi, then try again.');
         socket.close();
       }, 10000);
-      socket.addEventListener('open', () => socket.send(JSON.stringify(request)));
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ ...request, clientId: this.clientId })));
       socket.addEventListener('message', ({ data }) => {
         if (this.socket !== socket) return;
         let packet;
@@ -42,6 +50,7 @@ export class MultiplayerSession {
           this.playerId = packet.playerId;
           this.roomCode = packet.roomCode;
           this.hostId = packet.hostId;
+          this.worldName = packet.world?.name || packet.state?.name || 'My world';
           resolve(packet);
         } else if (!settled && packet.type === 'error') {
           fail(packet.message);
@@ -70,7 +79,7 @@ export class MultiplayerSession {
   pose(player, active) {
     this.poseElapsed = 0;
     return this.send({ type: 'pose', x: player.pos.x, y: player.pos.y, z: player.pos.z,
-      yaw: player.yaw, pitch: player.pitch, active });
+      yaw: player.yaw, pitch: player.pitch, active, ...this.getInventory() });
   }
 
   update(dt, player, active) {

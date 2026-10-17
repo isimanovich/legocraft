@@ -11,6 +11,8 @@ import { TouchControls } from './touch-controls.js';
 import { MultiplayerSession } from './multiplayer.js';
 import { RemotePlayers } from './remote-players.js';
 import { NetworkEntities } from './network-entities.js';
+import { decodeTerrain } from './save-format.js';
+import { SoloSaveStore, captureSolo, restoreSolo } from './solo-saves.js';
 import {
   Tomatoes, TOMATOES_PER_WAVE, TOMATO_MAX, TOMATO_BLAST_RADIUS, TOMATO_DAMAGE, TOMATO_CRATER_RADIUS, THROW_COOLDOWN,
 } from './tomatoes.js';
@@ -150,6 +152,15 @@ const remotePlayers = new RemotePlayers(scene);
 // Initialised after the passive-creature array below.
 let networkEntities;
 const session = new MultiplayerSession({ onPacket: receiveNetworkPacket, onDisconnect: disconnected });
+session.getInventory = () => ({ hotbar, slot: state.slot });
+let soloRecord = null;
+let saveBusy = false;
+let soloSavePending;
+let soloSaveProblem = false;
+let newGamePending = false;
+let sharedSaveTimer;
+let savedListGeneration = 0;
+const soloSaves = new SoloSaveStore();
 
 /** Minifigs in a wave. Grows every wave; a wave ends only when all of them are destroyed. */
 function waveSize(wave) {
@@ -432,6 +443,210 @@ function notice(text) {
   if (text) notice.timer = setTimeout(() => { $('session-notice').textContent = ''; }, 6500);
 }
 
+// Shared saves live on the server; Solo saves stay in this browser's IndexedDB.
+const soloEnvironment = () => ({ world, player, state, hotbar, enemies, animals, ragdolls, tomatoes, scene });
+const newSaveId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
+const worldName = () => $('world-name').value.trim().slice(0, 40) || 'My world';
+const saveTime = value => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function savedStatus(text) { $('save-status').textContent = text; }
+
+function finishSharedSave(packet) {
+  clearTimeout(sharedSaveTimer);
+  saveBusy = false;
+  $('save-world').disabled = false;
+  if (packet) {
+    session.worldName = packet.name || session.worldName;
+    savedStatus(`Saved on the Pi at ${saveTime(packet.savedAt)}.`);
+  }
+}
+
+async function saveSoloWorld({ quiet = false } = {}) {
+  if (session.connected || networkLoading || !soloRecord || !state.gameMode || state.mode === 'loading') return false;
+  if (saveBusy) {
+    if (!soloSavePending) return false;
+    if (quiet) return soloSavePending.then(() => true, () => false);
+    // A pending autosave may predate the player's final edits. Save the current
+    // paused state again before a manual save or a move to another world.
+    await soloSavePending.catch(() => {});
+    return saveSoloWorld({ quiet });
+  }
+  saveBusy = true;
+  $('save-world').disabled = true;
+  if (!quiet) savedStatus('Saving on this device…');
+  try {
+    soloSavePending = soloSaves.put({ ...soloRecord, snapshot: captureSolo(soloEnvironment()) });
+    const saved = await soloSavePending;
+    soloRecord = { id: saved.id, name: saved.name, createdAt: saved.createdAt };
+    soloSaveProblem = false;
+    savedStatus(`Saved on this device at ${saveTime(saved.updatedAt)}.`);
+    return true;
+  } catch (error) {
+    soloSaveProblem = true;
+    savedStatus(`Save failed: ${error.message}`);
+    refreshSavedWorlds();
+    syncSessionUi();
+    if (!quiet) notice('Could not save this world. Keep this tab open and try Save now again.');
+    return false;
+  } finally {
+    saveBusy = false;
+    soloSavePending = null;
+    $('save-world').disabled = false;
+    syncSessionUi();
+  }
+}
+
+function saveWorld() {
+  if (saveBusy) return;
+  if (!session.connected) { saveSoloWorld(); return; }
+  saveBusy = true;
+  $('save-world').disabled = true;
+  savedStatus('Saving on the Pi…');
+  if (!networkAction('save')) {
+    finishSharedSave();
+    savedStatus('Save could not be sent. Rejoin the world and try again.');
+    return;
+  }
+  sharedSaveTimer = setTimeout(() => {
+    finishSharedSave();
+    savedStatus('Save was not confirmed. Try Save now again.');
+  }, 10000);
+}
+
+function savedWorldRow(record, location) {
+  const row = document.createElement('div');
+  row.className = 'saved-world-row';
+  row.setAttribute('role', 'listitem');
+  const info = document.createElement('div');
+  info.className = 'saved-world-info';
+  const title = document.createElement('strong');
+  title.className = 'saved-world-title';
+  title.textContent = record.name || 'My world';
+  const meta = document.createElement('span');
+  meta.className = 'saved-world-meta';
+  const details = [record.gameMode === 'wave' ? 'Waves' : 'Free build'];
+  if (location === 'server') details.push(`Room ${record.code}`, `${record.players}/${record.maxPlayers} players`);
+  if (record.updatedAt) details.push(new Date(record.updatedAt).toLocaleString());
+  if (record.compatible === false) details.push('Needs a newer game version');
+  meta.textContent = details.join(' · ');
+  info.append(title, meta);
+  const actions = document.createElement('div');
+  actions.className = 'saved-world-actions';
+  const resume = document.createElement('button');
+  resume.type = 'button';
+  resume.className = 'menu-btn';
+  resume.textContent = 'Resume';
+  resume.dataset.resumeWorld = record.compatible === false ? 'unsupported' : 'compatible';
+  resume.disabled = record.compatible === false || state.mode !== 'ready' || Boolean(state.gameMode);
+  resume.addEventListener('click', () => {
+    if (location === 'server') {
+      multiplayerChoice = true;
+      $('room-code').value = record.code;
+      syncSessionUi();
+      connectRoom('join');
+    } else resumeSoloWorld(record.id);
+  });
+  actions.append(resume);
+  if (location === 'server') {
+    const backup = document.createElement('a');
+    backup.className = 'menu-btn alt';
+    backup.textContent = 'Backup';
+    backup.href = `/api/worlds/${encodeURIComponent(record.code)}/export`;
+    backup.download = `legocraft-${record.code}.json`;
+    actions.append(backup);
+  } else {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'menu-btn alt';
+    remove.textContent = 'Delete';
+    let confirmUntil = 0;
+    remove.addEventListener('click', async () => {
+      if (Date.now() > confirmUntil) {
+        confirmUntil = Date.now() + 5000;
+        remove.textContent = 'Confirm delete';
+        setTimeout(() => { if (Date.now() >= confirmUntil) remove.textContent = 'Delete'; }, 5100);
+        return;
+      }
+      remove.disabled = true;
+      try { await soloSaves.delete(record.id); refreshSavedWorlds(); }
+      catch (error) { $('saved-worlds-status').textContent = error.message; remove.disabled = false; }
+    });
+    actions.append(remove);
+  }
+  row.append(info, actions);
+  return row;
+}
+
+async function refreshSavedWorlds() {
+  const generation = ++savedListGeneration;
+  $('saved-worlds-status').textContent = 'Loading saved worlds…';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  const results = await Promise.allSettled([
+    soloSaves.list(),
+    fetch('/api/worlds', { cache: 'no-store', signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error('Shared saves need the Pi game server.');
+      const data = await response.json();
+      if (!Array.isArray(data.worlds)) throw new Error('Shared saves need the Pi game server.');
+      return data.worlds;
+    }),
+  ]);
+  clearTimeout(timeout);
+  if (generation !== savedListGeneration) return;
+  const messages = [];
+  for (const [index, location] of ['solo', 'server'].entries()) {
+    const list = $(location === 'solo' ? 'solo-world-list' : 'server-world-list');
+    list.replaceChildren();
+    const result = results[index];
+    if (result.status === 'fulfilled') {
+      for (const record of result.value) list.append(savedWorldRow(record, location));
+      if (!result.value.length) list.textContent = 'No saved worlds yet.';
+    } else {
+      list.textContent = location === 'solo' ? 'Device saves are unavailable in this browser.' : 'Shared saves need the Pi game server.';
+      if (location === 'solo') messages.push(result.reason.message);
+    }
+  }
+  $('saved-worlds-status').textContent = messages.join(' ') || (state.gameMode
+    ? 'You can delete an older device save to free space, then try Save world now again.'
+    : 'Choose Resume to continue a saved world.');
+}
+
+async function resumeSoloWorld(id) {
+  if (networkLoading || session.connected || state.mode !== 'ready' || state.gameMode) return;
+  networkLoading = true;
+  try {
+    const record = await soloSaves.get(id);
+    if (!record) throw new Error('This saved world could not be found.');
+    state.mode = 'loading';
+    showStartOverlay('loading');
+    resetRun();
+    restoreSolo(record.snapshot, soloEnvironment());
+    soloRecord = { id: record.id, name: record.name, createdAt: record.createdAt };
+    hotbar.forEach((item, i) => renderSlotIcon(slotEls[i], item));
+    setSlot(state.slot);
+    document.body.classList.toggle('build-mode', state.gameMode === 'build');
+    await new Promise(resolve => buildWorld(resolve));
+    networkLoading = false;
+    state.mode = player.health <= 0 ? 'dead' : 'ready';
+    if (state.mode === 'dead') die();
+    else showStartOverlay('ready');
+    savedStatus(`Resumed ${record.name} from this device.`);
+    syncControls();
+  } catch (error) {
+    networkLoading = false;
+    state.mode = 'ready';
+    $('saved-worlds-status').textContent = `Could not resume: ${error.message}`;
+    syncSessionUi();
+  }
+}
+
+$('refresh-worlds').addEventListener('click', refreshSavedWorlds);
+$('save-world').addEventListener('click', event => { event.stopPropagation(); saveWorld(); });
+setInterval(() => saveSoloWorld({ quiet: true }), 15000);
+// Mobile browsers may suspend a tab without firing beforeunload.
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveSoloWorld({ quiet: true }); });
+window.addEventListener('pagehide', () => saveSoloWorld({ quiet: true }));
+
 function syncSessionUi() {
   const connected = session.connected;
   const atPicker = state.mode === 'ready' && !state.gameMode;
@@ -441,7 +656,16 @@ function syncSessionUi() {
   $('multiplayer-panel').hidden = connected || !multiplayerChoice || !atPicker;
   if (atPicker) $('mode-pick').classList.toggle('hidden', multiplayerChoice);
   $('session-status').hidden = !connected;
-  $('session-label').textContent = connected ? `Room ${session.roomCode}` : '';
+  $('session-label').textContent = connected ? `${session.worldName} · Room ${session.roomCode}` : '';
+  $('world-name-field').hidden = !atPicker || connected;
+  const manageSoloSaves = !connected && state.mode === 'paused' && soloSaveProblem;
+  $('saved-worlds').hidden = !(atPicker || manageSoloSaves) || connected;
+  $('server-world-saves').hidden = manageSoloSaves;
+  for (const button of $('saved-worlds').querySelectorAll('[data-resume-world]')) {
+    button.disabled = !atPicker || button.dataset.resumeWorld === 'unsupported';
+  }
+  $('save-world').hidden = state.mode !== 'paused' || !state.gameMode;
+  $('save-status').hidden = !state.gameMode;
   $('room-leave').hidden = !connected || state.mode !== 'paused';
   $('room-reset').hidden = !connected || state.mode !== 'paused' || session.hostId !== session.playerId;
   $('new-game').classList.toggle('hidden', connected || state.mode !== 'paused');
@@ -453,7 +677,7 @@ function syncSessionUi() {
     : 'Inventory (pauses the game): all bricks and the sword';
 }
 
-for (const id of ['session-choice', 'multiplayer-panel']) {
+for (const id of ['session-choice', 'multiplayer-panel', 'world-name-field', 'saved-worlds']) {
   $(id).addEventListener('click', (event) => event.stopPropagation());
 }
 for (const [id, together] of [['session-solo', false], ['session-multi', true]]) {
@@ -492,7 +716,7 @@ async function connectRoom(type) {
   networkPackets = [];
   sfx.init();
   try {
-    const welcome = await session.connect({ type, name, roomCode, gameMode: $('room-mode').value });
+    const welcome = await session.connect({ type, name, roomCode, worldName: worldName(), gameMode: $('room-mode').value });
     $('room-error').textContent = '';
     await loadNetworkWorld(welcome);
   } catch (error) {
@@ -523,12 +747,28 @@ async function loadNetworkWorld(packet) {
   resetRun();
   $('death').classList.add('hidden');
   showStartOverlay('loading');
-  world.regenerate(packet.world.seed);
-  for (const [x, y, z, block] of packet.blocks) world.set(x, y, z, block);
+  if (packet.world.terrain) {
+    const data = decodeTerrain(packet.world.terrain);
+    world.seed = packet.world.seed;
+    world.data.set(data);
+    for (let i = 0; i < world.meshes.length; i++) world.dirty.add(i);
+  } else {
+    world.regenerate(packet.world.seed);
+    for (const [x, y, z, block] of packet.blocks) world.set(x, y, z, block);
+  }
+  session.worldName = packet.world.name || packet.state.name || session.worldName;
+  soloRecord = null;
   state.gameMode = packet.state.gameMode;
   document.body.classList.toggle('build-mode', state.gameMode === 'build');
   const own = packet.state.players.find((p) => p.id === session.playerId);
-  if (own) setNetworkPosition(own);
+  if (own) {
+    setNetworkPosition(own);
+    if (Array.isArray(own.hotbar) && own.hotbar.length === HOTBAR_SLOTS) {
+      hotbar.splice(0, HOTBAR_SLOTS, ...own.hotbar);
+      hotbar.forEach((item, i) => renderSlotIcon(slotEls[i], item));
+      setSlot(own.slot ?? 0);
+    }
+  }
   applyNetworkState(packet.state);
   await new Promise((resolve) => buildWorld(resolve));
   if (!session.connected || generation !== networkGeneration) return;
@@ -564,7 +804,8 @@ function receiveNetworkPacket(packet) {
     networkPackets.push(packet);
     return;
   }
-  if (packet.type === 'state') applyNetworkState(packet);
+  if (packet.type === 'saved') finishSharedSave(packet);
+  else if (packet.type === 'state') applyNetworkState(packet);
   else if (packet.type === 'blocks') {
     for (const [x, y, z, block] of packet.blocks) world.set(x, y, z, block);
   } else if (packet.type === 'world') loadNetworkWorld(packet);
@@ -579,6 +820,8 @@ function receiveNetworkPacket(packet) {
       sfx.breakBlock();
     } else if (packet.event === 'place') sfx.placeBlock();
   } else if (packet.type === 'error') {
+    if (packet.code === 'SAVE_FAILED' || packet.code === 'SAVE_DISABLED') { finishSharedSave(); savedStatus(packet.message); }
+    if (packet.code === 'AUTOSAVE_FAILED') savedStatus(packet.message);
     if (packet.code === 'RESPAWN_COOLDOWN') cancelRespawnWait();
     notice(packet.message);
   }
@@ -590,6 +833,7 @@ function applyNetworkState(snapshot) {
   const oldHealth = player.health;
   const oldWave = state.wave;
   session.hostId = snapshot.hostId;
+  if (snapshot.worldName || snapshot.name) session.worldName = snapshot.worldName || snapshot.name;
   Object.assign(state, { score: snapshot.score, kills: snapshot.kills, wave: snapshot.wave,
     waveRemaining: snapshot.remaining, intermission: snapshot.intermission, tomatoes: own.tomatoes });
   if (own.health > 0 && (networkRespawning || state.mode === 'dead')) {
@@ -617,6 +861,7 @@ function applyNetworkState(snapshot) {
 }
 
 function leaveRoom() {
+  finishSharedSave();
   cancelRespawnWait();
   ++networkGeneration;
   session.close();
@@ -631,6 +876,8 @@ function leaveRoom() {
 }
 
 function disconnected(roomCode) {
+  finishSharedSave();
+  savedStatus('Connection lost. The last confirmed save stays on the Pi.');
   cancelRespawnWait();
   ++networkGeneration;
   networkLoading = false;
@@ -727,11 +974,9 @@ syncControls();
 
 function play() {
   if (!((state.mode === 'ready' && state.gameMode) || (state.mode === 'paused' && !state.inventoryOpen))) return;
-  const fresh = state.mode === 'ready';
   state.mode = 'playing';
   $('start').classList.add('hidden');
   syncControls();
-  if (!session.connected && fresh && state.gameMode === 'wave' && state.waveRemaining === 0 && enemies.length === 0) startWave(1);
 }
 
 function pauseGame() {
@@ -742,6 +987,7 @@ function pauseGame() {
   syncControls();
   if (document.pointerLockElement === canvas) document.exitPointerLock?.();
   if (!state.inventoryOpen) showStartOverlay('paused');
+  saveSoloWorld({ quiet: true });
 }
 
 function pointerLockError() {
@@ -870,12 +1116,16 @@ $('start').addEventListener('click', () => {
   lock();
 });
 function chooseMode(mode) {
-  if (state.mode !== 'ready' || networkLoading) return;
+  if (state.mode !== 'ready' || state.gameMode || networkLoading || newGamePending) return;
+  soloRecord = { id: newSaveId(), name: worldName() };
+  savedStatus('Autosaves on this device every 15 seconds.');
   state.gameMode = mode;
-  if (mode === 'build') state.tomatoes = TOMATO_MAX; // nothing to earn them from, so start stocked
-  document.body.classList.toggle('build-mode', mode === 'build');
   sfx.init();
+  if (mode === 'build') state.tomatoes = TOMATO_MAX; // nothing to earn them from, so start stocked
+  else startWave(1);
+  document.body.classList.toggle('build-mode', mode === 'build');
   lock();
+  saveSoloWorld({ quiet: true });
 }
 $('mode-wave').addEventListener('click', (e) => { e.stopPropagation(); chooseMode('wave'); });
 $('mode-build').addEventListener('click', (e) => { e.stopPropagation(); chooseMode('build'); });
@@ -1312,8 +1562,21 @@ function restart() {
   lock();
 }
 
-/** From the pause menu: throw the world away and generate a new one, then wait for a click to play. */
-function newGame() {
+/** Keep the current Solo save before returning to the new-world picker. */
+async function newGame() {
+  if (newGamePending) return;
+  newGamePending = true;
+  $('new-game').disabled = true;
+  if (soloRecord && state.gameMode && !session.connected) {
+    if (!await saveSoloWorld()) {
+      notice('Finish saving this world before starting another one. Try Save now again.');
+      newGamePending = false;
+      $('new-game').disabled = false;
+      return;
+    }
+  }
+  soloRecord = null;
+  savedStatus('');
   state.mode = 'loading';
   document.exitPointerLock?.();
   resetRun();
@@ -1329,7 +1592,10 @@ function newGame() {
       player.spawn();
       setSlot(0);
       state.mode = 'ready';
+      newGamePending = false;
+      $('new-game').disabled = false;
       showStartOverlay('pick');
+      refreshSavedWorlds();
     });
   });
 }
@@ -1485,6 +1751,7 @@ function frame(now) {
 
 // ---- Boot -----------------------------------------------------------------------
 function boot() {
+  refreshSavedWorlds();
   world.generate();
   buildWorld(() => {
     player.spawn();

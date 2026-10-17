@@ -578,4 +578,39 @@ player.keys.add('KeyW');
 for (let i = 0; i < 60; i++) player.update(1 / 60);
 console.log(`player at ${player.pos.x.toFixed(2)}, ${player.pos.y.toFixed(2)}, ${player.pos.z.toFixed(2)}`);
 
+// Touch movement preserves analogue speed without accelerating diagonals;
+// keyboard movement keeps its existing speed, sprint, and jump behavior.
+{
+  const flat = new World(new THREE.Scene(), { sizeX: 32, sizeZ: 32, sizeY: 16 });
+  for (let x = 0; x < 32; x++) for (let z = 0; z < 32; z++) flat.set(x, 0, z, BLOCK.STONE);
+  const makePlayer = () => {
+    const p = new Player(new THREE.PerspectiveCamera(), flat);
+    p.pos.set(16.5, 1.01, 16.5);
+    p.onGround = true;
+    return p;
+  };
+  const distance = (configure) => {
+    const p = makePlayer();
+    configure(p);
+    const start = p.pos.clone();
+    for (let i = 0; i < 60; i++) p.update(1 / 60);
+    return Math.hypot(p.pos.x - start.x, p.pos.z - start.z);
+  };
+  const keyboard = distance(p => p.keys.add('KeyW'));
+  const full = distance(p => { p.touch.z = 1; });
+  const gentle = distance(p => { p.touch.z = 0.4; });
+  const diagonal = distance(p => { p.touch.x = p.touch.z = 1; });
+  const sprint = distance(p => { p.touch.z = 1; p.touch.sprint = true; });
+  assert.ok(keyboard > 4.5, 'keyboard still moves at walking speed');
+  assert.ok(Math.abs(full - keyboard) < 0.01, 'full thumbstick matches keyboard speed');
+  assert.ok(Math.abs(gentle / full - 0.4) < 0.01, 'partial thumbstick gives partial speed');
+  assert.ok(Math.abs(diagonal - full) < 0.01, 'diagonal thumbstick cannot exceed walking speed');
+  assert.ok(sprint > full * 1.5, 'touch sprint increases speed');
+  const jumper = makePlayer();
+  jumper.touch.jump = true;
+  jumper.update(1 / 60);
+  assert.ok(jumper.vel.y > 0 && jumper.pos.y > 1.01, 'touch jump leaves the ground');
+  console.log('touch movement: analogue speed, diagonal cap, sprint, jump; keyboard speed preserved');
+}
+
 console.log('OK');

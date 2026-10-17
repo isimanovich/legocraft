@@ -7,6 +7,7 @@ import { Ragdolls, CARRY_DISTANCE } from './ragdoll.js';
 import { Sfx } from './sfx.js';
 import { rayBox, boxCollides } from './physics.js';
 import { Animal } from './animals.js';
+import { TouchControls } from './touch-controls.js';
 import {
   Tomatoes, TOMATOES_PER_WAVE, TOMATO_MAX, TOMATO_BLAST_RADIUS, TOMATO_DAMAGE, TOMATO_CRATER_RADIUS, THROW_COOLDOWN,
 } from './tomatoes.js';
@@ -277,12 +278,12 @@ function renderInventoryHotbar() {
 function openInventory() {
   if (state.mode !== 'playing' || state.naming || state.inventoryOpen) return;
   state.inventoryOpen = true;
-  player.keys.clear();
-  state.mouse.fill(false);
+  state.mode = 'paused';
+  clearInput();
+  syncControls();
   renderInventoryHotbar();
   invNameEl.textContent = itemName(hotbar[state.slot]);
   $('inventory').classList.remove('hidden');
-  // Release the pointer so the player can click; pointerlockchange parks the game in 'paused'.
   document.exitPointerLock?.();
 }
 
@@ -409,9 +410,113 @@ function updateCompass() {
 
 // ---- Input -----------------------------------------------------------------
 const canvas = renderer.domElement;
+let controlMode = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 ? 'touch' : 'laptop';
+try {
+  const saved = localStorage.getItem('legocraft-controls');
+  if (saved === 'touch' || saved === 'laptop') controlMode = saved;
+} catch { /* Private browsing can disallow preference storage. */ }
+
+const touchControls = new TouchControls({
+  canvas,
+  root: $('touch-controls'),
+  onMove: (x, z) => { player.touch.x = x; player.touch.z = z; },
+  onLook: (dx, dy) => player.onMouseMove(dx * 1.6, dy * 1.6),
+  onHold: (action, held) => {
+    if (action === 'jump' || action === 'sprint') {
+      player.touch[action] = held;
+      if (action === 'jump' && held && player.onGround) sfx.jump();
+    } else holdAction(action === 'attack' ? 0 : 2, held);
+  },
+  onAction: (action) => {
+    if (action === 'inventory') openInventory();
+    else if (action === 'pause') pauseGame();
+    else if (action === 'name') beginNaming();
+    else if (action === 'tomato') throwTomato();
+    else if (action.startsWith('slot:')) setSlot(Number(action.slice(5)));
+  },
+});
+
+function holdAction(button, held) {
+  state.mouse[button] = held;
+  if (held && button === 0) state.swingCooldown = 0;
+  if (held && button === 2) state.placeCooldown = 0;
+  if (!held && button === 0 && ragdolls.carrying) {
+    player.lookDir(_dir);
+    ragdolls.drop(_dir.clone().multiplyScalar(2.5).add(player.vel));
+    $('carry-hint').style.opacity = 0;
+  }
+}
+
+function clearInput() {
+  touchControls.reset();
+  player.keys.clear();
+  Object.assign(player.touch, { x: 0, z: 0, jump: false, sprint: false });
+  holdAction(0, false);
+  state.mouse.fill(false);
+}
+
+function syncControls() {
+  const touch = controlMode === 'touch';
+  document.body.classList.toggle('touch-mode', touch);
+  $('input-laptop').setAttribute('aria-pressed', String(!touch));
+  $('input-touch').setAttribute('aria-pressed', String(touch));
+  $('touch-help').hidden = !touch;
+  $('laptop-help').hidden = touch;
+  touchControls.setEnabled(touch && state.mode === 'playing' && !state.naming);
+}
+
+function selectControls(mode) {
+  clearInput();
+  controlMode = mode;
+  try { localStorage.setItem('legocraft-controls', mode); } catch { /* Optional preference. */ }
+  syncControls();
+  if (state.mode === 'paused') showStartOverlay('paused');
+  else if (state.mode === 'ready' && state.gameMode) showStartOverlay('ready');
+}
+for (const mode of ['laptop', 'touch']) {
+  $('input-' + mode).addEventListener('click', (event) => {
+    event.stopPropagation();
+    selectControls(mode);
+  });
+}
+$('input-picker').addEventListener('click', (event) => event.stopPropagation());
+syncControls();
+
+function play() {
+  if (!((state.mode === 'ready' && state.gameMode) || (state.mode === 'paused' && !state.inventoryOpen))) return;
+  const fresh = state.mode === 'ready';
+  state.mode = 'playing';
+  $('start').classList.add('hidden');
+  syncControls();
+  if (fresh && state.gameMode === 'wave' && state.waveRemaining === 0 && enemies.length === 0) startWave(1);
+}
+
+function pauseGame() {
+  if (state.mode !== 'playing') return;
+  if (state.naming) endNaming(false);
+  state.mode = 'paused';
+  clearInput();
+  syncControls();
+  if (document.pointerLockElement === canvas) document.exitPointerLock?.();
+  if (!state.inventoryOpen) showStartOverlay('paused');
+}
+
+function pointerLockError() {
+  if (controlMode !== 'laptop' || state.mode === 'playing') return;
+  player.locked = false;
+  if (state.inventoryOpen || state.mode === 'dead' || state.mode === 'loading') return;
+  showStartOverlay(state.mode === 'ready' ? 'ready' : 'paused');
+  $('start-cta').textContent = 'Mouse lock unavailable. Click to retry or choose iPad / iPhone controls.';
+}
 
 function lock() {
-  canvas.requestPointerLock?.();
+  sfx.init();
+  if (controlMode === 'touch') { play(); return; }
+  if (!canvas.requestPointerLock) { pointerLockError(); return; }
+  try {
+    const request = canvas.requestPointerLock();
+    request?.catch(pointerLockError);
+  } catch { pointerLockError(); }
 }
 
 /** Show the start/pause overlay in the right configuration for the current state. */
@@ -421,37 +526,25 @@ function showStartOverlay(kind) {
   $('new-game').classList.toggle('hidden', kind !== 'paused');
   cta.classList.toggle('hidden', kind === 'pick');
   if (kind === 'loading') cta.textContent = 'Generating world\u2026';
-  else if (kind === 'ready') cta.textContent = 'Click to play';
-  else if (kind === 'paused') cta.textContent = 'Paused - click to resume';
+  else if (kind === 'ready') cta.textContent = controlMode === 'touch' ? 'Tap to play' : 'Click to play';
+  else if (kind === 'paused') cta.textContent = controlMode === 'touch' ? 'Paused — tap to resume' : 'Paused — click to resume';
   $('start').classList.remove('hidden');
 }
 
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
   player.locked = locked;
-  if (locked) {
-    if ((state.mode === 'ready' && state.gameMode) || state.mode === 'paused') {
-      const fresh = state.mode === 'ready';
-      state.mode = 'playing';
-      $('start').classList.add('hidden');
-      if (fresh && state.gameMode === 'wave' && state.waveRemaining === 0 && enemies.length === 0) startWave(1);
-    }
-  } else if (state.mode === 'playing') {
-    if (state.naming) endNaming(false);
-    state.mode = 'paused';
-    player.keys.clear();
-    state.mouse.fill(false);
-    // The inventory owns the screen while it is open; otherwise show the pause screen.
-    if (!state.inventoryOpen) showStartOverlay('paused');
+  if (controlMode !== 'laptop') {
+    if (locked) document.exitPointerLock?.();
+    return;
   }
+  if (locked) play();
+  else pauseGame();
 });
-document.addEventListener('pointerlockerror', () => {
-  // Re-lock refused (browsers throttle it right after an Esc): fall back to the pause screen.
-  if (state.mode === 'paused' && !state.inventoryOpen) showStartOverlay('paused');
-});
+document.addEventListener('pointerlockerror', pointerLockError);
 
 document.addEventListener('mousemove', (e) => {
-  if (state.mode === 'playing' && player.locked && !state.naming) player.onMouseMove(e.movementX, e.movementY);
+  if (controlMode === 'laptop' && state.mode === 'playing' && player.locked && !state.naming) player.onMouseMove(e.movementX, e.movementY);
 });
 
 document.addEventListener('keydown', (e) => {
@@ -479,6 +572,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (state.mode !== 'playing') return;
+  if (e.code === 'Escape') { e.preventDefault(); pauseGame(); return; }
+  if (controlMode !== 'laptop' || e.repeat && ['KeyE', 'KeyN', 'KeyQ'].includes(e.code)) return;
   if (e.code === 'KeyN') {
     e.preventDefault();
     beginNaming();
@@ -503,30 +598,24 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => player.keys.delete(e.code));
 
 document.addEventListener('wheel', (e) => {
-  if (state.mode !== 'playing' || state.naming) return;
+  if (controlMode !== 'laptop' || state.mode !== 'playing' || state.naming) return;
   setSlot(state.slot + (e.deltaY > 0 ? 1 : -1));
 }, { passive: true });
 
 canvas.addEventListener('mousedown', (e) => {
-  if (state.mode !== 'playing' || !player.locked || state.naming) return;
-  state.mouse[e.button] = true;
-  if (e.button === 0) state.swingCooldown = 0; // immediate first swing
+  if (controlMode !== 'laptop' || state.mode !== 'playing' || !player.locked || state.naming) return;
+  holdAction(e.button, true);
   if (e.button === 1) {
     e.preventDefault();
     throwTomato();
   }
-  if (e.button === 2) state.placeCooldown = 0;
 });
 document.addEventListener('mouseup', (e) => {
-  state.mouse[e.button] = false;
-  if (e.button === 0 && ragdolls.carrying) {
-    // Let go: the body keeps the hand's motion plus a gentle forward toss.
-    player.lookDir(_dir);
-    ragdolls.drop(_dir.clone().multiplyScalar(2.5).add(player.vel));
-    $('carry-hint').style.opacity = 0;
-  }
+  if (controlMode === 'laptop') holdAction(e.button, false);
 });
-document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('contextmenu', (e) => { if (!e.target.closest('input')) e.preventDefault(); });
+window.addEventListener('blur', pauseGame);
+document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); });
 
 $('start').addEventListener('click', () => {
   if (state.mode === 'loading') return;
@@ -551,14 +640,30 @@ $('new-game').addEventListener('click', (e) => {
 $('inventory').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeInventory(); // click the backdrop to close
 });
+$('close-inventory').addEventListener('click', closeInventory);
 $('death').addEventListener('click', () => {
   if (state.mode === 'dead') restart();
 });
 
 window.addEventListener('resize', () => {
+  clearInput();
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+slotEls.forEach((el, i) => {
+  touchControls.bindPointer(el, `tap:slot:${i}`);
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  el.setAttribute('aria-label', `Select hotbar slot ${i + 1}`);
+  const select = () => {
+    if (controlMode === 'touch' && state.mode === 'playing' && !state.naming) setSlot(i);
+  };
+  el.addEventListener('click', (e) => { if (e.detail === 0) select(); });
+  el.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); select(); }
+  });
 });
 
 // ---- Gameplay --------------------------------------------------------------
@@ -617,7 +722,7 @@ function swing() {
   if (body && (!target || body.dist < target.dist) && (!hit || body.dist < hit.dist)) {
     ragdolls.grab(body.body, body.point);
     sfx.grab();
-    $('carry-hint').textContent = `Carrying ${body.body.name || 'a body'} \u2014 release left click to drop`;
+    $('carry-hint').textContent = carryHint(body.body.name);
     $('carry-hint').style.opacity = 1;
     return;
   }
@@ -761,6 +866,12 @@ function throwTomato() {
 
 // ---- Naming fallen Stalkers --------------------------------------------------
 const nameInput = $('name-input');
+$('name-confirm').addEventListener('click', () => endNaming(true));
+$('name-cancel').addEventListener('click', () => endNaming(false));
+
+function carryHint(name) {
+  return `Carrying ${name || 'a body'} — ${controlMode === 'touch' ? 'release Hit' : 'release left click'} to drop`;
+}
 
 /** Open the name prompt for the body being carried, or the one under the crosshair. */
 function beginNaming() {
@@ -775,8 +886,8 @@ function beginNaming() {
   }
   if (!body) return;
   state.naming = body;
-  player.keys.clear();
-  state.mouse.fill(false);
+  clearInput();
+  syncControls();
   nameInput.value = body.name;
   $('name-prompt').classList.remove('hidden');
   nameInput.focus();
@@ -789,6 +900,7 @@ function endNaming(confirm) {
   state.naming = null;
   $('name-prompt').classList.add('hidden');
   nameInput.blur();
+  syncControls();
   if (!confirm || !ragdolls.bodies.includes(body)) return;
   const name = nameInput.value.trim().slice(0, 16);
   ragdolls.setName(body, name, (n) => {
@@ -797,7 +909,7 @@ function endNaming(confirm) {
     return s;
   });
   if (name) sfx.grab();
-  if (ragdolls.carrying === body) $('carry-hint').textContent = `Carrying ${name || 'a body'} \u2014 release left click to drop`;
+  if (ragdolls.carrying === body) $('carry-hint').textContent = carryHint(name);
 }
 
 /** A tomato burst at `c`; `direct` is the minifig or body it struck, if any. Harmless to the thrower. */
@@ -867,6 +979,8 @@ function detonate(en) {
 
 function die() {
   state.mode = 'dead';
+  clearInput();
+  syncControls();
   sfx.die();
   document.exitPointerLock?.();
   $('final-score').textContent = state.score;
@@ -895,8 +1009,8 @@ function resetRun() {
     score: 0, kills: 0, wave: 1, elapsed: 0, waveRemaining: 0, intermission: 0, spawnTimer: 2, flash: 0, swing: 0,
     tomatoes: 0, throwCooldown: 0,
   });
-  state.mouse.fill(false);
-  player.keys.clear();
+  clearInput();
+  syncControls();
   $('flash').style.opacity = 0;
 }
 

@@ -17,6 +17,7 @@ export class Player {
     this.health = 100;
     this.regenDelay = 0;
     this.keys = new Set();
+    this.touch = { x: 0, z: 0, jump: false, sprint: false };
     this.locked = false;
     this.bob = 0;
     this.knock = new THREE.Vector3();
@@ -81,21 +82,20 @@ export class Player {
 
   update(dt) {
     const k = this.keys;
-    const sprint = k.has('ShiftLeft') || k.has('ShiftRight');
+    const sprint = this.touch.sprint || k.has('ShiftLeft') || k.has('ShiftRight');
     const swimming = inWater(this.world, this.pos);
     const speed = (sprint ? 8.5 : 5.2) * (swimming ? 0.55 : 1);
 
     this._fwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     this._right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
 
-    let mx = 0;
-    let mz = 0;
+    let mx = this.touch.x;
+    let mz = this.touch.z;
     if (k.has('KeyW') || k.has('ArrowUp')) mz += 1;
     if (k.has('KeyS') || k.has('ArrowDown')) mz -= 1;
     if (k.has('KeyD') || k.has('ArrowRight')) mx += 1;
     if (k.has('KeyA') || k.has('ArrowLeft')) mx -= 1;
-    const moving = mx !== 0 || mz !== 0;
-    if (moving) {
+    if (Math.hypot(mx, mz) > 1) {
       const inv = 1 / Math.hypot(mx, mz);
       mx *= inv;
       mz *= inv;
@@ -109,12 +109,13 @@ export class Player {
     this.vel.x += (wishX - this.vel.x) * t;
     this.vel.z += (wishZ - this.vel.z) * t;
 
-    if ((k.has('Space')) && this.onGround) {
+    const jumping = this.touch.jump || k.has('Space');
+    if (jumping && this.onGround) {
       this.vel.y = 9.2;
       this.onGround = false;
     }
     this.vel.y -= GRAVITY * dt;
-    if (swimming) applyBuoyancy(this.vel, dt, k.has('Space'));
+    if (swimming) applyBuoyancy(this.vel, dt, jumping);
     if (this.vel.y < -40) this.vel.y = -40;
 
     const res = moveWithCollision(this.world, this.pos, this.vel, dt, this.halfW, this.height);

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>LEGOCRAFT</title>
 <style>
   :root {
@@ -12,7 +12,9 @@
     --dark: #05131d;
   }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
-  canvas { display: block; }
+  canvas { display: block; touch-action: none; }
+  .hidden, [hidden] { display: none !important; }
+  button { touch-action: manipulation; }
   #ui { position: fixed; inset: 0; pointer-events: none; }
 
   /* Crosshair */
@@ -113,6 +115,78 @@
   #name-prompt input:focus { border-color: #fff; }
   #name-prompt .small { font-size: 12px; opacity: .8; }
   #name-prompt kbd { display: inline-block; padding: 1px 5px; border-radius: 4px; background: #fff; color: var(--dark); font-weight: 800; font-family: inherit; font-size: 11px; }
+  /* Input choice is always available on the start/pause screen. */
+  #input-picker { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-bottom: 18px; }
+  #input-picker .input-btn { font: inherit; font-size: 14px; font-weight: 800; border: 2px solid rgba(255,255,255,.3); border-radius: 8px; padding: 10px 14px; background: var(--dark); color: #fff; cursor: pointer; }
+  #input-picker .input-btn[aria-pressed="true"] { border-color: var(--yellow); color: var(--yellow); background: #263332; }
+  #input-picker button:focus-visible, .touch-btn:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  #touch-help { max-width: 430px; font-size: 15px; line-height: 1.5; margin: 0 0 18px; padding: 12px 18px; border-radius: 10px; background: rgba(0,0,0,.35); }
+  #touch-help p { margin: 4px 0; }
+  #touch-help small { color: var(--yellow); }
+  .overlay { box-sizing: border-box; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; cursor: default; }
+  .overlay > * { flex-shrink: 0; }
+  .title { font-size: clamp(30px, 7vw, 72px); }
+  .subtitle { max-width: 620px; }
+  .controls { max-width: 640px; grid-template-columns: auto minmax(0, 1fr); }
+  #mode-pick { flex-wrap: wrap; justify-content: center; }
+  .mode-btn { min-width: 0; width: min(280px, 100%); }
+  #name-prompt { inset: 0; transform: none; background: rgba(5,19,29,.78); border: 0; border-radius: 0; justify-content: center; box-sizing: border-box; overflow-y: auto; z-index: 3; }
+  .name-actions { display: flex; gap: 12px; }
+  .name-actions .menu-btn { margin-top: 0; }
+  #name-prompt input { max-width: 75vw; font-size: 20px; user-select: text; -webkit-user-select: text; }
+  #close-inventory { margin-top: 16px; }
+
+  /* Touch controls stay above the safe area and leave the centre clear for aiming. */
+  #touch-controls { position: absolute; inset: 0; pointer-events: none; }
+  .touch-btn, #move-stick { pointer-events: auto; touch-action: none; -webkit-touch-callout: none; }
+  .touch-btn { min-width: 48px; min-height: 48px; padding: 8px; border: 2px solid rgba(255,255,255,.55); border-radius: 12px; background: rgba(5,19,29,.68); color: #fff; font: inherit; font-size: 13px; font-weight: 800; text-shadow: 0 1px 0 #000; }
+  .touch-btn:active, .touch-btn.pressed, .touch-btn[aria-pressed="true"] { color: var(--dark); background: var(--yellow); text-shadow: none; border-color: var(--yellow); }
+  #touch-menu { position: absolute; right: max(12px, env(safe-area-inset-right)); top: max(12px, env(safe-area-inset-top)); display: flex; gap: 6px; }
+  #move-stick { position: absolute; width: 116px; height: 116px; left: max(16px, env(safe-area-inset-left)); bottom: calc(100px + env(safe-area-inset-bottom)); border: 2px solid rgba(255,255,255,.45); border-radius: 50%; background: rgba(5,19,29,.4); box-sizing: border-box; }
+  #move-stick::before { content: "MOVE"; position: absolute; top: 10px; width: 100%; text-align: center; font-size: 10px; font-weight: 800; opacity: .7; }
+  #move-knob { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; margin: -21px; border-radius: 50%; background: rgba(255,255,255,.65); box-shadow: 0 2px 6px #0008; pointer-events: none; }
+  #touch-sprint { position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: calc(230px + env(safe-area-inset-bottom)); }
+  #touch-actions { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(100px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(2, 62px); gap: 8px; }
+  #touch-actions .touch-btn { min-height: 58px; }
+  #touch-actions small { display: block; font-size: 10px; font-weight: 600; }
+  body.touch-mode #hint { display: none; }
+  body.touch-mode #stats { left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top)); font-size: 12px; line-height: 1.4; }
+  body.touch-mode #compass { top: calc(94px + env(safe-area-inset-top)); width: min(440px, calc(100% - 32px)); }
+  body.touch-mode #hotbar { pointer-events: auto; bottom: calc(12px + env(safe-area-inset-bottom)); gap: 3px; padding: 4px; touch-action: none; }
+  body.touch-mode #hotbar .slot { width: clamp(28px, calc((100vw - 60px) / 9), 44px); height: 44px; border-width: 2px; cursor: pointer; }
+  body.touch-mode #hotbar .brick { width: 23px; height: 25px; }
+  body.touch-mode #hotbar .slot:focus-visible { outline: 2px solid #fff; }
+  body.touch-mode #health { bottom: calc(66px + env(safe-area-inset-bottom)); width: min(240px, 70vw); height: 16px; }
+  body.touch-mode #blockname { bottom: calc(88px + env(safe-area-inset-bottom)); font-size: 12px; }
+  body.touch-mode #carry-hint { bottom: auto; top: calc(128px + env(safe-area-inset-top)); width: 80%; font-size: 12px; text-align: center; }
+  body.touch-mode #wave-banner { font-size: clamp(24px, 5vw, 40px); text-align: center; width: 85%; top: 28%; }
+  @media (max-width: 600px) {
+    .subtitle { font-size: 14px; margin-bottom: 16px; }
+    .controls { padding: 12px; font-size: 12px; gap: 5px 10px; }
+    #mode-pick { gap: 12px; width: 100%; }
+    .mode-btn { width: 100%; padding: 12px; font-size: 18px; }
+    .inv-grid { grid-template-columns: repeat(5, 48px); gap: 6px; padding: 8px; }
+    .inv-grid .slot { width: 48px; height: 48px; }
+    .inv-hotbar { gap: 3px; padding: 4px; }
+    .inv-hotbar .slot { width: clamp(28px, calc((100vw - 68px) / 9), 44px); height: 44px; }
+    .inv-hotbar .brick { width: 23px; height: 25px; }
+    .inv-sub { font-size: 13px; max-width: 100%; }
+    .inv-spawn { flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .spawn-btn { padding: 10px 12px; min-height: 44px; }
+    #death .title { font-size: 32px; }
+    #death .score { font-size: 18px; }
+  }
+  @media (max-height: 700px) {
+    .overlay { justify-content: flex-start; }
+    .title { margin-top: 8px; }
+  }
+  @media (max-height: 480px) and (orientation: landscape) {
+    #move-stick { bottom: calc(76px + env(safe-area-inset-bottom)); width: 100px; height: 100px; }
+    #touch-actions { bottom: calc(76px + env(safe-area-inset-bottom)); }
+    #touch-sprint { bottom: calc(186px + env(safe-area-inset-bottom)); min-height: 44px; }
+    body.touch-mode #compass { top: max(14px, env(safe-area-inset-top)); width: 28%; }
+    body.touch-mode #carry-hint { top: 52px; width: 45%; }
+  }
 </style>
 </head>
 <body>
@@ -132,16 +206,44 @@
     <label id="name-label" for="name-input">Name this fallen Stalker</label>
     <input id="name-input" type="text" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. Gerald" />
     <div class="small"><kbd>Enter</kbd> confirm &middot; <kbd>Esc</kbd> cancel &middot; empty name removes it</div>
+    <div class="name-actions"><button type="button" class="menu-btn" id="name-confirm">Save name</button><button type="button" class="menu-btn" id="name-cancel">Cancel</button></div>
   </div>
   <div id="health"><div class="fill" id="healthfill"></div><div class="label" id="healthlabel">100</div></div>
   <div id="blockname"></div>
   <div id="hotbar"></div>
   <div id="flash"></div>
 
+  <div id="touch-controls" hidden aria-label="Touch game controls">
+    <div id="touch-menu">
+      <button type="button" class="touch-btn" data-touch-action="inventory" aria-label="Open inventory">Bag</button>
+      <button type="button" class="touch-btn" data-touch-action="name" aria-label="Name a fallen Stalker">Name</button>
+      <button type="button" class="touch-btn" data-touch-action="pause">Pause</button>
+    </div>
+    <div id="move-stick" aria-label="Drag to move"><div id="move-knob"></div></div>
+    <button type="button" class="touch-btn" id="touch-sprint" data-touch-action="sprint" aria-pressed="false">Sprint</button>
+    <div id="touch-actions">
+      <button type="button" class="touch-btn" data-touch-hold="jump">Jump<small>Hold to swim</small></button>
+      <button type="button" class="touch-btn" data-touch-hold="attack">Hit<small>Hold / grab</small></button>
+      <button type="button" class="touch-btn" data-touch-hold="place">Place</button>
+      <button type="button" class="touch-btn" data-touch-action="tomato">Tomato</button>
+    </div>
+  </div>
+
   <div id="start" class="overlay">
     <h1 class="title">LEGO<span>CRAFT</span></h1>
     <div class="subtitle">Build. Survive. Smash the minifigs before they smash you.</div>
-    <div class="controls">
+    <div id="input-picker" role="group" aria-label="Control mode">
+      <span>Controls</span>
+      <button type="button" class="input-btn" id="input-laptop" aria-pressed="true">Laptop</button>
+      <button type="button" class="input-btn" id="input-touch" aria-pressed="false">iPad / iPhone</button>
+    </div>
+    <div id="touch-help" hidden>
+      <p><b>Left thumbstick</b> to move. <b>Drag the world</b> to look.</p>
+      <p><b>Hit</b> to break or attack; hold to carry, release to drop.<br/><b>Place</b> builds. <b>Jump</b> also swims. <b>Sprint</b> toggles speed.</p>
+      <p>Tap a hotbar slot to select. <b>Bag</b> opens inventory.<br/><b>Tomato</b> throws; <b>Name</b> names a fallen Stalker.</p>
+      <small>Landscape gives you more room. Pause to switch controls.</small>
+    </div>
+    <div class="controls" id="laptop-help">
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><div>Move</div>
       <div><kbd>Mouse</kbd></div><div>Look</div>
       <div><kbd>Space</kbd></div><div>Jump</div>
@@ -163,7 +265,7 @@
 
   <div id="inventory" class="overlay hidden" role="dialog" aria-labelledby="inv-title">
     <h2 id="inv-title">Inventory</h2>
-    <div class="inv-sub">Pick a hotbar slot, then click an item to put it there. <kbd>E</kbd> or <kbd>Esc</kbd> closes.</div>
+    <div class="inv-sub">Pick a hotbar slot, then tap or click an item to put it there.</div>
     <div id="inv-items" class="inv-grid"></div>
     <div id="inv-hotbar" class="inv-hotbar"></div>
     <div id="inv-name" class="inv-name">&nbsp;</div>
@@ -173,12 +275,13 @@
       <button type="button" class="menu-btn spawn-btn" id="spawn-cat">Cat</button>
       <button type="button" class="menu-btn spawn-btn alt" id="spawn-stalker">Fallen Stalker</button>
     </div>
+    <button type="button" class="menu-btn" id="close-inventory">Done &mdash; back to game</button>
   </div>
 
   <div id="death" class="overlay hidden">
     <h1 class="title">YOU GOT BRICKED</h1>
     <div class="score">Score <b id="final-score">0</b> &middot; Kills <b id="final-kills">0</b> &middot; Wave <b id="final-wave">1</b></div>
-    <div class="cta">Click or press R to rebuild yourself</div>
+    <button type="button" class="menu-btn" id="restart-game">Rebuild yourself</button>
   </div>
 </div>
 

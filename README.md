@@ -18,6 +18,38 @@ the bricks). `Esc` pauses; the pause screen has a **New game** button that
 throws the world away, generates a fresh one and asks for a mode again. Dying
 and pressing `R` restarts in the same world and mode.
 
+## Laptop or iPad / iPhone controls
+
+Choose **Laptop** or **iPad / iPhone** under **Controls** on the start screen.
+This choice is separate from Survive / Free build. Touch devices default to
+iPad / iPhone; your selection is remembered when browser storage is available.
+You can switch controls from the pause screen without starting a new game.
+
+Laptop uses the keyboard and a locked mouse, as before. iPad / iPhone uses
+on-screen controls and does not require mouse locking or a physical keyboard:
+
+| Touch control | Action |
+|---|---|
+| Left thumbstick | Move; drag farther for full speed |
+| Drag an uncovered part of the world | Look / aim with the crosshair |
+| Jump | Jump; hold to swim up |
+| Sprint | Toggle sprint on / off |
+| Hit | Break blocks / attack; hold to repeat or carry a fallen Stalker, release to drop |
+| Place | Place the selected brick; hold to repeat |
+| Tomato | Throw an exploding tomato |
+| Tap a hotbar slot | Select that slot |
+| Bag | Open inventory; pick a slot and item, then tap Done to return |
+| Name | Name the fallen Stalker under the crosshair or being carried; Save name / Cancel dismisses the keyboard |
+| Pause | Pause, resume, switch controls, or start a new world |
+| Rebuild yourself | Restart after dying |
+
+Movement, aiming and actions work with multiple fingers at the same time.
+Portrait and landscape layouts fit phones and tablets, including screen safe
+areas; landscape gives aiming more room. Switching apps or losing focus pauses
+the game and releases held inputs. Returning to play starts with neutral controls.
+
+### Laptop keyboard shortcuts
+
 | Key | Action |
 |---|---|
 | W A S D / arrows | Move |
@@ -163,9 +195,34 @@ src/debris.js     flying bricks
 src/sfx.js        procedural WebAudio sounds
 src/noise.js      value noise / fBm
 test/smoke.mjs    headless test (node --import ./test/register.mjs test/smoke.mjs)
+src/touch-controls.js   multi-pointer thumbstick, look, and on-screen actions
+test/browser.mjs  optional Chromium regression tests for touch and laptop controls
 ```
 
 Tuning knobs: `World` options in `main.js` (size, seed, `studs: false` for a
 flat Minecraft look), structure counts in `World.placeStructures`, `ENEMY_TYPES`
 / `AGGRO_RADIUS` / `waveMods()` in `enemies.js`, `waveSize()` / `maxAlive()` /
 `INTERMISSION_SECONDS` in `main.js`.
+
+## Validation
+
+Run the existing headless gameplay suite with Node 24:
+
+```bash
+node --import ./test/register.mjs test/smoke.mjs
+```
+
+The browser suite uses Playwright and starts its own local test server. It checks
+simultaneous touches, building/breaking, inventory, carrying/naming, restarting,
+mouse locking and keyboard controls, preference storage, and phone/tablet layouts.
+To use the cloud environment's installed Chromium without adding game dependencies:
+
+```bash
+npm install --prefix /tmp/legocraft-browser --cache /tmp/legocraft-npm-cache --no-audit --no-fund playwright
+PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
+  CHROMIUM_PATH=/usr/bin/chromium node --test test/browser.mjs
+```
+
+With Playwright and its Chromium already installed in your own development setup,
+`node --test test/browser.mjs` also works. Chromium's device emulation does not
+replace testing Safari and touch/audio behavior on a physical iPad or iPhone.

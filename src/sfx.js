@@ -8,7 +8,10 @@ export class Sfx {
 
   /** Must be called from a user gesture. */
   init() {
-    if (this.ctx) return;
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+      return;
+    }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) {
       this.enabled = false;
@@ -18,6 +21,7 @@ export class Sfx {
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.25;
     this.master.connect(this.ctx.destination);
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
   }
 
   tone({ type = 'square', from = 440, to = 220, dur = 0.12, vol = 1, delay = 0 }) {

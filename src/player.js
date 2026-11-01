@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { seatPosition } from './furniture.js';
 import { GRAVITY, moveWithCollision, inWater, applyBuoyancy } from './physics.js';
 
 export class Player {
@@ -12,6 +13,8 @@ export class Player {
     this.halfW = 0.3;
     this.height = 1.8;
     this.eye = 1.62;
+    this.sitting = false;
+    this.seat = null;
     this.onGround = false;
     this.maxHealth = 100;
     this.health = 100;
@@ -27,7 +30,12 @@ export class Player {
     this._right = new THREE.Vector3();
   }
 
+  stand() {
+    this.sitting = false; this.seat = null; this.eye = 1.62;
+  }
+
   spawn() {
+    this.stand();
     const g = this.world.findGround(this.world.sx / 2, this.world.sz / 2, 20) ||
       { x: Math.floor(this.world.sx / 2), z: Math.floor(this.world.sz / 2), y: this.world.heightAt(this.world.sx / 2, this.world.sz / 2) };
     this.pos.set(g.x + 0.5, g.y + 1.01, g.z + 0.5);
@@ -69,6 +77,7 @@ export class Player {
   }
 
   takeDamage(amount, fromX, fromZ) {
+    if (amount > 0) this.stand();
     this.health = Math.max(0, this.health - amount);
     this.regenDelay = 5;
     const dx = this.pos.x - fromX;
@@ -82,6 +91,16 @@ export class Player {
 
   update(dt) {
     const k = this.keys;
+    if (this.sitting) {
+      const move = this.touch.x || this.touch.z || this.touch.jump || ['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].some(key => k.has(key));
+      if (move || !seatPosition(this.world, this.seat, this.halfW, this.height)) this.stand();
+      else {
+        this.vel.set(0, 0, 0);
+        if (this.regenDelay > 0) this.regenDelay -= dt;
+        else this.health = Math.min(this.maxHealth, this.health + 4 * dt);
+        this.syncCamera(); return;
+      }
+    }
     const sprint = this.touch.sprint || k.has('ShiftLeft') || k.has('ShiftRight');
     const swimming = inWater(this.world, this.pos);
     const speed = (sprint ? 8.5 : 5.2) * (swimming ? 0.55 : 1);

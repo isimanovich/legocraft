@@ -323,6 +323,31 @@
     body.touch-mode .inv-hotbar { grid-template-columns: repeat(9, 64px); gap: 8px; padding: 8px; }
   }
 
+
+  .furniture-icon { width: 30px; height: 30px; font-size: 30px; line-height: 30px; text-align: center; color: #46cab0; text-shadow: 1px 2px #073630; }
+  .furniture-icon[data-furniture="tv"] { color: #21343e; background: #080f17; border: 3px solid #6c7881; box-sizing: border-box; border-radius: 3px; font-size: 0; height: 23px; }
+  .furniture-icon[data-furniture="bed"] { color: #f57b8e; text-shadow: 1px 2px #864831; }
+  #skin-picker { width: min(440px, 100%); box-sizing: border-box; margin: 0 0 18px; padding: 12px; border: 1px solid #ffffff40; border-radius: 12px; background: #05131d99; }
+  #skin-picker summary { cursor: pointer; font-weight: bold; padding: 4px; color: var(--yellow); }
+  .skin-editor { display: flex; gap: 20px; align-items: center; justify-content: center; padding: 12px 0; }
+  .skin-colors { display: grid; gap: 8px; }
+  .skin-colors label { display: flex; gap: 14px; align-items: center; justify-content: space-between; }
+  .skin-colors input { width: 56px; height: 38px; cursor: pointer; border: 1px solid #ffffff80; border-radius: 6px; background: transparent; padding: 2px; }
+  #skin-preview { position: relative; width: 90px; height: 128px; --skin: #f2cd37; --shirt: #0055bf; --pants: #16344b; }
+  #skin-preview .head { position: absolute; background: var(--skin); width: 36px; height: 36px; top: 4px; left: 27px; border-radius: 7px; box-shadow: inset -5px -3px #0002; }
+  #skin-preview .head::before { content: '• •'; color: #152333; position: absolute; left: 0; top: 5px; width: 100%; text-align: center; font-size: 18px; }
+  #skin-preview .head::after { content: ''; position: absolute; left: 12px; top: 24px; width: 12px; height: 4px; border-bottom: 2px solid #152333; border-radius: 0 0 50% 50%; }
+  #skin-preview .body { position: absolute; top: 42px; left: 23px; width: 44px; height: 44px; background: var(--shirt); box-shadow: inset -6px -4px #0002; }
+  #skin-preview .body::before, #skin-preview .body::after { content: ''; position: absolute; top: 0; width: 14px; height: 46px; background: linear-gradient(var(--shirt) 75%, var(--skin) 75%); }
+  #skin-preview .body::before { left: -17px; transform: rotate(8deg); } #skin-preview .body::after { right: -17px; transform: rotate(-8deg); }
+  #skin-preview .legs { position: absolute; top: 88px; left: 24px; width: 18px; height: 38px; background: var(--pants); box-shadow: 24px 0 var(--pants); }
+  #skin-presets { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+  .skin-preset { background: #263c4b; color: white; padding: 9px 12px; border: 1px solid #ffffff50; border-radius: 6px; font: inherit; cursor: pointer; }
+  #skin-picker p { font-size: 12px; margin: 10px 0 0; opacity: .8; }
+  #furniture-hint { position: absolute; left: 50%; top: 57%; transform: translateX(-50%); background: #05131dcc; border-radius: 8px; padding: 8px 12px; max-width: 70%; text-align: center; font-size: 13px; pointer-events: none; }
+  #day-phase { position: absolute; right: 18px; bottom: 18px; color: #fff; text-shadow: 1px 1px #000; font-size: 13px; }
+  body.touch-mode #day-phase { top: auto; bottom: var(--touch-bottom); right: var(--touch-right); }
+  #touch-menu { flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -337,7 +362,9 @@
   </div>
   <div id="session-status" hidden aria-label="Multiplayer session"><span id="session-label"></span><span id="session-players"></span></div>
   <div id="session-notice" role="status" aria-live="polite" aria-atomic="true"></div>
-  <div id="hint">Left click: break / attack / grab body<br/>Hold left: carry body<br/>Right click: place<br/>E: inventory<br/>Q / middle click: throw tomato<br/>N: name a fallen Stalker<br/>Esc: pause</div>
+  <div id="day-phase" aria-label="Time of day">Day</div>
+  <div id="furniture-hint" hidden></div>
+  <div id="hint">Left click: break / attack / grab body<br/>Hold left: carry body<br/>Right click: place<br/>E: inventory<br/>Q / middle click: throw tomato<br/>N: name a fallen Stalker<br/>F: use furniture / stand<br/>Esc: pause</div>
   <div id="wave-banner"></div>
   <div id="carry-hint">Carrying a body &mdash; release left click to drop</div>
   <div id="name-prompt" class="hidden" role="dialog" aria-labelledby="name-label">
@@ -354,6 +381,7 @@
   <div id="touch-controls" hidden aria-label="Touch game controls">
     <div id="touch-menu">
       <button type="button" class="touch-btn" data-touch-action="inventory" aria-label="Open inventory">Bag</button>
+      <button type="button" class="touch-btn" data-touch-action="interact" aria-label="Use furniture or stand up">Use</button>
       <button type="button" class="touch-btn" data-touch-action="name" aria-label="Name a fallen Stalker">Name</button>
       <button type="button" class="touch-btn" data-touch-action="pause">Pause</button>
     </div>
@@ -379,10 +407,23 @@
       <button type="button" class="input-btn" id="input-laptop" aria-pressed="true">Laptop</button>
       <button type="button" class="input-btn" id="input-touch" aria-pressed="false">iPad / iPhone</button>
     </div>
+    <details id="skin-picker">
+      <summary>Personalise your skin</summary>
+      <div class="skin-editor">
+        <div id="skin-preview" role="img" aria-label="Your skin preview"><span class="head"></span><span class="body"></span><span class="legs"></span></div>
+        <div class="skin-colors">
+          <label for="skin-tone">Skin tone <input type="color" id="skin-tone" value="#f2cd37" /></label>
+          <label for="skin-shirt">Shirt <input type="color" id="skin-shirt" value="#0055bf" /></label>
+          <label for="skin-pants">Trousers <input type="color" id="skin-pants" value="#16344b" /></label>
+        </div>
+      </div>
+      <div id="skin-presets" aria-label="Skin presets"></div>
+      <p>Remembered on this device. Your sleeve and your multiplayer minifig wear these colours.</p>
+    </details>
     <div id="touch-help" hidden>
       <p><b>Left thumbstick</b> to move. <b>Drag the world</b> to look.</p>
       <p><b>Hit</b> to break or attack; hold to carry, release to drop.<br/><b>Place</b> builds. <b>Jump</b> also swims. <b>Sprint</b> toggles speed.</p>
-      <p>Tap a hotbar slot to select. <b>Bag</b> opens inventory.<br/><b>Tomato</b> throws; <b>Name</b> names a fallen Stalker.</p>
+      <p>Tap a hotbar slot to select. <b>Bag</b> opens inventory.<br/><b>Tomato</b> throws; <b>Name</b> names a fallen Stalker.<br/><b>Use</b> sits on a couch or sleeps in a bed; move to stand.</p>
       <small>Landscape gives you more room. Pause to switch controls.</small>
     </div>
     <div class="controls" id="laptop-help">
@@ -395,6 +436,7 @@
       <div><kbd>Q</kbd> / <kbd>MMB</kbd></div><div>Throw an exploding tomato (3 handed out every wave)</div>
       <div><kbd>1</kbd>-<kbd>9</kbd> / <kbd>Wheel</kbd></div><div>Select hotbar slot</div>
       <div><kbd>E</kbd></div><div id="inventory-key-help">Inventory (pauses solo games): all bricks and the sword</div>
+      <div><kbd>F</kbd></div><div>Use couch / bed, or stand up</div>
       <div><kbd>Esc</kbd></div><div>Pause</div>
     </div>
     <div class="cta" id="start-cta">Generating world&hellip;</div>
@@ -450,7 +492,7 @@
 
   <div id="inventory" class="overlay hidden" role="dialog" aria-labelledby="inv-title">
     <h2 id="inv-title">Inventory</h2>
-    <div class="inv-sub" id="inv-description">Pick a hotbar slot, then tap or click an item to put it there.</div>
+    <div class="inv-sub" id="inv-description">Pick a hotbar slot, then tap or click an item to put it there. TV, couch and bed are at the end of the list.</div>
     <div id="inv-items" class="inv-grid"></div>
     <div id="inv-hotbar" class="inv-hotbar"></div>
     <div id="inv-name" class="inv-name">&nbsp;</div>

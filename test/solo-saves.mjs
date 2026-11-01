@@ -111,6 +111,83 @@ test('additive Solo save fields are tolerated without losing existing progress',
   assert.equal(env.state.wave, 7);
 });
 
+test('Solo clocks preserve night, default older snapshots to day and reject invalid time before restore', () => {
+  const before = environment();
+  before.state.timeOfDay = 0.75;
+  before.world.set(70, 1, 71, BLOCK.TV);
+  before.world.set(71, 1, 71, BLOCK.COUCH);
+  before.world.set(72, 1, 71, BLOCK.BED);
+  const saved = JSON.parse(JSON.stringify(captureSolo(before)));
+  assert.equal(saved.timeOfDay, 0.75);
+  const after = environment();
+  restoreSolo(saved, after);
+  assert.equal(after.state.timeOfDay, 0.75);
+  for (const [x, type] of [[70, BLOCK.TV], [71, BLOCK.COUCH], [72, BLOCK.BED]]) assert.equal(after.world.get(x, 1, 71), type);
+
+  const legacy = structuredClone(saved);
+  delete legacy.timeOfDay;
+  restoreSolo(legacy, after);
+  assert.equal(after.state.timeOfDay, 0.25, 'pre-clock saves start in daytime');
+  const unchanged = captureSolo(after);
+  for (const value of [-0.1, 1.1, NaN, Infinity, null, 'night']) {
+    const damaged = structuredClone(saved);
+    damaged.timeOfDay = value;
+    assert.throws(() => restoreSolo(damaged, after), /time of day/);
+    assert.deepEqual(captureSolo(after), unchanged, 'bad clock values do not modify the live world');
+  }
+});
+
+test('seated Solo players stay anchored, regenerate and stand for movement, damage or missing furniture', () => {
+  const env = environment();
+  const { player, world } = env;
+  world.set(70, 1, 70, BLOCK.COUCH);
+  const sit = () => {
+    player.pos.set(70.5, 2.01, 70.5);
+    player.vel.set(3, 2, 1);
+    player.sitting = true; player.seat = { x: 70, y: 1, z: 70 }; player.eye = 0.72;
+    player.keys.clear(); player.touch = { x: 0, z: 0, jump: false, sprint: false };
+  };
+  sit();
+  player.health = 60; player.regenDelay = 0;
+  const anchor = player.pos.clone();
+  player.update(0.25);
+  assert.equal(player.sitting, true);
+  assert.deepEqual(player.pos, anchor, 'gravity and old movement do not drift a seated player');
+  assert.equal(player.vel.length(), 0);
+  assert.equal(player.health, 61, 'resting retains normal health regeneration');
+  assert.ok(Math.abs(player.eyePos().y - player.pos.y - 0.72) < 1e-8);
+  player.regenDelay = 1; player.update(0.25);
+  assert.equal(player.regenDelay, 0.75);
+  assert.equal(player.health, 61, 'damage cooldown still delays regeneration while seated');
+
+  for (const key of ['KeyW', 'ArrowLeft', 'Space']) {
+    sit(); player.keys.add(key); player.update(0.01);
+    assert.equal(player.sitting, false, `${key} stands up`);
+    assert.equal(player.eye, 1.62);
+  }
+  for (const touch of [{ x: 0.5 }, { z: 1 }, { jump: true }]) {
+    sit(); Object.assign(player.touch, touch); player.update(0.01);
+    assert.equal(player.sitting, false, 'touch movement and jump stand up');
+  }
+  sit(); player.takeDamage(5, 68, 70);
+  assert.equal(player.sitting, false);
+  assert.equal(player.seat, null);
+  assert.equal(player.eye, 1.62);
+
+  sit(); world.set(70, 1, 70, BLOCK.AIR); player.update(0.01);
+  assert.equal(player.sitting, false, 'destroyed chairs release seated players');
+  world.set(70, 1, 70, BLOCK.COUCH);
+  sit(); world.set(70, 3, 70, BLOCK.STONE); player.update(0.01);
+  assert.equal(player.sitting, false, 'unsafe headroom releases the chair');
+  world.set(70, 3, 70, BLOCK.AIR);
+  sit();
+  const saved = captureSolo(env);
+  restoreSolo(saved, env);
+  assert.equal(player.sitting, false, 'resuming releases the transient sitting pose');
+  assert.equal(player.eye, 1.62);
+  assert.equal(world.get(70, 1, 70), BLOCK.COUCH, 'resuming keeps the furniture');
+});
+
 test('missing browser storage reports a clear error instead of pretending to save', async () => {
   const store = new SoloSaveStore({ indexedDB: null });
   await assert.rejects(store.list(), /need browser storage/);

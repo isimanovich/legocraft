@@ -25,6 +25,7 @@ export function captureSolo({ world, player, state, hotbar, enemies, animals, ra
   return {
     kind: KIND, version: SOLO_SAVE_VERSION, seed: world.seed,
     dimensions: [world.sx, world.sy, world.sz], terrain: encodeTerrain(world.data),
+    timeOfDay: state.timeOfDay ?? .25,
     gameMode: state.gameMode, state: values(state, stateNumbers), hotbar: [...hotbar],
     player: {
       pos: vector(player.pos), vel: vector(player.vel), knock: vector(player.knock),
@@ -82,6 +83,7 @@ export function validateSolo(saved, world) {
   if (saved.version !== SOLO_SAVE_VERSION || saved.kind !== KIND) throw new Error('This Solo save format is not supported. Its saved copy has been kept.');
   if (saved.gameMode !== 'wave' && saved.gameMode !== 'build') invalid('game mode');
   number(saved.seed, 'seed');
+  if (saved.timeOfDay !== undefined) number(saved.timeOfDay, 'time of day', 0, 1);
   if (!Array.isArray(saved.dimensions) || saved.dimensions.join(',') !== '144,48,144') invalid('world dimensions');
   if (world && (world.sx !== 144 || world.sy !== 48 || world.sz !== 144)) invalid('world dimensions');
   const terrain = decodeTerrain(saved.terrain);
@@ -155,9 +157,11 @@ export function restoreSolo(saved, env) {
   for (let i = 0; i < world.meshes.length; i++) world.dirty.add(i);
   player.pos.fromArray(saved.player.pos); player.vel.fromArray(saved.player.vel); player.knock.fromArray(saved.player.knock);
   copyNumbers(player, saved.player, ['yaw', 'pitch', 'health', 'maxHealth', 'regenDelay', 'bob', 'onGround']);
+  player.stand();
   player.syncCamera();
   copyNumbers(state, saved.state, stateNumbers);
   state.gameMode = saved.gameMode;
+  state.timeOfDay = saved.timeOfDay ?? .25;
   hotbar.splice(0, hotbar.length, ...saved.hotbar);
   for (const data of saved.enemies) {
     const enemy = new EnemyClass(data.kind, ...data.pos, saved.state.wave);

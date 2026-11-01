@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { makeNameTag, NAME_TAG_SIZE } from './enemies.js';
+import { normalizeSkin } from './skins.js';
 
 const SNAPSHOT_SECONDS = 0.1;
 const TELEPORT_DISTANCE = 8;
@@ -53,16 +54,20 @@ export class RemotePlayers {
   createPeer(player, pos) {
     const group = new THREE.Group();
     group.name = `remote-player-${player.id}`;
+    const avatar = new THREE.Group();
+    group.add(avatar);
     const material = (color) => new THREE.MeshLambertMaterial({ color });
+    const skin = normalizeSkin(player.skin);
     const materials = {
-      torso: material(colorFor(player)), skin: material(0xf2cd37),
-      legs: material(0x05131d), face: material(0x05131d),
+      torso: material(player.skin ? skin.shirt : colorFor(player)), skin: material(skin.skin),
+      legs: material(player.skin ? skin.pants : 0x05131d), face: material(0x05131d),
       healthBack: new THREE.SpriteMaterial({ color: 0x731b1b, depthWrite: false }),
       healthFill: new THREE.SpriteMaterial({ color: 0x62c350, depthWrite: false }),
     };
     const mesh = (kind, mat, x, y, z) => {
       const node = new THREE.Mesh(this.geometries[kind], materials[mat]);
       node.position.set(x, y, z);
+      node.castShadow = true;
       return node;
     };
     const legL = new THREE.Group();
@@ -71,7 +76,7 @@ export class RemotePlayers {
     legR.position.set(0.16, 0.55, 0);
     legL.add(mesh('leg', 'legs', 0, -0.275, 0));
     legR.add(mesh('leg', 'legs', 0, -0.275, 0));
-    group.add(legL, legR, mesh('hip', 'legs', 0, 0.62, 0), mesh('torso', 'torso', 0, 0.99, 0));
+    avatar.add(legL, legR, mesh('hip', 'legs', 0, 0.62, 0), mesh('torso', 'torso', 0, 0.99, 0));
     const armL = new THREE.Group();
     const armR = new THREE.Group();
     armL.position.set(-0.4, 1.24, 0);
@@ -81,13 +86,13 @@ export class RemotePlayers {
     for (const arm of [armL, armR]) {
       arm.add(mesh('arm', 'torso', 0, -0.24, 0), mesh('hand', 'skin', 0, -0.53, 0));
     }
-    group.add(armL, armR);
+    avatar.add(armL, armR);
     const head = new THREE.Group();
     head.position.set(0, 1.3, 0);
     head.add(mesh('neck', 'skin', 0, 0.02, 0), mesh('head', 'skin', 0, 0.22, 0), mesh('stud', 'skin', 0, 0.45, 0));
     // Player yaw zero faces -Z, matching the local camera and movement controls.
     head.add(mesh('eye', 'face', -0.09, 0.27, -0.267), mesh('eye', 'face', 0.09, 0.27, -0.267), mesh('mouth', 'face', 0, 0.13, -0.28));
-    group.add(head);
+    avatar.add(head);
     const healthBack = new THREE.Sprite(materials.healthBack);
     const healthFill = new THREE.Sprite(materials.healthFill);
     healthBack.position.y = healthFill.position.y = 2.03;
@@ -99,7 +104,7 @@ export class RemotePlayers {
     group.position.set(...pos);
     group.rotation.y = Number.isFinite(player.yaw) ? player.yaw : 0;
     const peer = {
-      group, materials, legL, legR, armL, armR, head, healthFill, healthBack,
+      group, avatar, materials, legL, legR, armL, armR, head, healthFill, healthBack,
       from: group.position.clone(), target: group.position.clone(), elapsed: SNAPSHOT_SECONDS,
       fromYaw: group.rotation.y, targetYaw: group.rotation.y, fromPitch: 0, targetPitch: 0,
       phase: 0, dead: false, paused: false, tag: null, label: null,
@@ -137,6 +142,9 @@ export class RemotePlayers {
       const health = Number.isFinite(player.health) ? THREE.MathUtils.clamp(player.health / maxHealth, 0, 1) : 1;
       peer.dead = player.dead === true || health <= 0;
       peer.paused = player.active === false && !peer.dead;
+      peer.sitting = player.sitting === true && !peer.dead;
+      peer.avatar.position.y = peer.sitting ? -0.9 : 0;
+      peer.healthFill.position.y = peer.healthBack.position.y = peer.sitting ? 1.13 : 2.03;
       const opacity = peer.dead ? 0.25 : peer.paused ? 0.55 : 1;
       for (const key of ['torso', 'skin', 'legs', 'face']) {
         const mat = peer.materials[key];
@@ -148,18 +156,21 @@ export class RemotePlayers {
         }
         mat.opacity = opacity;
       }
-      peer.materials.torso.color.set(colorFor(player));
+      const skin = normalizeSkin(player.skin);
+      peer.materials.torso.color.set(player.skin ? skin.shirt : colorFor(player));
+      peer.materials.skin.color.set(skin.skin);
+      peer.materials.legs.color.set(player.skin ? skin.pants : 0x05131d);
       peer.healthFill.scale.x = Math.max(0.001, 0.86 * health);
       peer.healthFill.visible = !peer.dead;
       peer.healthBack.visible = !peer.dead;
       const name = String(player.name ?? 'Player').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32) || 'Player';
-      const label = `${name}${peer.dead ? ' (respawning)' : peer.paused ? ' (paused)' : ''}`;
+      const label = `${name}${peer.dead ? ' (respawning)' : peer.sitting ? ' (sitting)' : peer.paused ? ' (paused)' : ''}`;
       if (label !== peer.label) {
         disposeTag(peer.tag);
         peer.label = label;
         peer.tag = makeNameTag(label, { color: '#ffffff', cache: false });
         if (peer.tag) {
-          peer.tag.position.y = 2.31;
+          peer.tag.position.y = peer.sitting ? 1.41 : 2.31;
           peer.tag.scale.set(NAME_TAG_SIZE.w, NAME_TAG_SIZE.h, 1);
           peer.group.add(peer.tag);
         }
@@ -181,13 +192,13 @@ export class RemotePlayers {
       peer.group.rotation.y = THREE.MathUtils.lerp(peer.fromYaw, peer.targetYaw, t);
       peer.head.rotation.x = THREE.MathUtils.lerp(peer.fromPitch, peer.targetPitch, t);
       const distance = Math.hypot(peer.group.position.x - oldX, peer.group.position.z - oldZ);
-      const walking = !peer.dead && !peer.paused && distance > 0.0001;
+      const walking = !peer.dead && !peer.paused && !peer.sitting && distance > 0.0001;
       peer.phase += distance * 2.5;
       const swing = walking ? Math.sin(peer.phase) * 0.55 : 0;
-      peer.legL.rotation.x = swing;
-      peer.legR.rotation.x = -swing;
-      peer.armL.rotation.x = -swing * 0.8;
-      peer.armR.rotation.x = swing * 0.8;
+      peer.legL.rotation.x = peer.sitting ? -Math.PI / 2 : swing;
+      peer.legR.rotation.x = peer.sitting ? -Math.PI / 2 : -swing;
+      peer.armL.rotation.x = peer.sitting ? -0.4 : -swing * 0.8;
+      peer.armR.rotation.x = peer.sitting ? -0.4 : swing * 0.8;
     }
   }
 

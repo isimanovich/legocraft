@@ -1,6 +1,8 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import * as THREE from 'three';
 import { BLOCK, PLACEABLE, DEFAULT_HOTBAR } from '../src/world.js';
+import { DAY_LENGTH, DEFAULT_TIME_OF_DAY, SEATED_EYE, nextSleepTime, seatPosition } from '../src/furniture.js';
+import { normalizeSkin } from '../src/skins.js';
 import { SAVE_FORMAT_VERSION, encodeTerrain, decodeTerrain, validateSaveVersion } from '../src/save-format.js';
 import { ENEMY_TYPES, findSpawnSpot, BLAST_RADIUS, BLAST_BLOCK_RADIUS, typeHeight } from '../src/enemies.js';
 import { ANIMAL_TYPES } from '../src/animals.js';
@@ -15,7 +17,7 @@ const cleanName = (name, fallback = 'Builder') => typeof name === 'string' ? nam
 const cleanWorldName = name => typeof name === 'string' ? name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) || 'My world' : 'My world';
 const overlaps = (x, y, z, e) => x + 1 > e.pos.x - e.halfW && x < e.pos.x + e.halfW && y + 1 > e.pos.y && y < e.pos.y + e.height && z + 1 > e.pos.z - e.halfW && z < e.pos.z + e.halfW;
 const falloff = (distance, radius) => distance >= radius ? 0 : Math.max(0.25, 1 - distance / radius);
-const pose = p => ({ ...xyz(p.pos), yaw: p.yaw, pitch: p.pitch });
+const pose = p => ({ ...xyz(p.pos), yaw: p.yaw, pitch: p.pitch, sitting: p.sitting === true, seat: p.seat ?? null });
 const clientIdPattern = /^[a-f0-9-]{16,64}$/i;
 const finite = (v, fallback, min = -1e9, max = 1e9) => Number.isFinite(v) && v >= min && v <= max ? v : fallback;
 const cleanHotbar = items => Array.isArray(items) && items.length === DEFAULT_HOTBAR.length && items.every(item => item === 'sword' || PLACEABLE.includes(item)) ? [...items] : [...DEFAULT_HOTBAR];
@@ -66,6 +68,7 @@ export class Room {
     this.code = code;
     this.name = cleanWorldName(saved.name);
     this.gameMode = gameMode;
+    this.timeOfDay = finite(saved.timeOfDay, DEFAULT_TIME_OF_DAY, 0, 1) % 1;
     this.createdAt = finite(saved.createdAt, Date.now(), 0, Number.MAX_SAFE_INTEGER);
     this.updatedAt = finite(saved.updatedAt, this.createdAt, 0, Number.MAX_SAFE_INTEGER);
     this.revision = finite(saved.revision, 0, 0, Number.MAX_SAFE_INTEGER);
@@ -152,12 +155,12 @@ export class Room {
   }
 
   broadcast(packet) { for (const p of this.players.values()) this.send(p.socket, packet); }
-  worldInfo() { return { code: this.code, name: this.name, gameMode: this.gameMode, createdAt: this.createdAt, updatedAt: this.updatedAt, revision: this.revision, seed: this.world.seed, sizeX: this.world.sx, sizeY: this.world.sy, sizeZ: this.world.sz, terrain: encodeTerrain(this.world.data) }; }
-  playerProfile(p) { return { clientId: p.clientId, name: p.name, pos: xyz(p.pos), yaw: p.yaw, pitch: p.pitch, health: p.health, regenDelay: p.regenDelay, tomatoes: p.tomatoes, hotbar: [...p.hotbar], slot: p.slot, updatedAt: Date.now() }; }
+  worldInfo() { return { code: this.code, name: this.name, gameMode: this.gameMode, createdAt: this.createdAt, updatedAt: this.updatedAt, revision: this.revision, seed: this.world.seed, timeOfDay: this.timeOfDay, sizeX: this.world.sx, sizeY: this.world.sy, sizeZ: this.world.sz, terrain: encodeTerrain(this.world.data) }; }
+  playerProfile(p) { return { clientId: p.clientId, name: p.name, skin: normalizeSkin(p.skin), pos: xyz(p.pos), yaw: p.yaw, pitch: p.pitch, health: p.health, regenDelay: p.regenDelay, tomatoes: p.tomatoes, hotbar: [...p.hotbar], slot: p.slot, updatedAt: Date.now() }; }
   persisted() {
     for (const p of this.players.values()) this.profiles.set(p.clientId, this.playerProfile(p));
     return { formatVersion: SAVE_FORMAT_VERSION, code: this.code, name: this.name, gameMode: this.gameMode, createdAt: this.createdAt, updatedAt: this.updatedAt, revision: this.revision,
-      seed: this.world.seed, terrain: encodeTerrain(this.world.data), blocks: [...this.blocks.values()], score: this.score, kills: this.kills, wave: this.wave,
+      seed: this.world.seed, timeOfDay: this.timeOfDay, terrain: encodeTerrain(this.world.data), blocks: [...this.blocks.values()], score: this.score, kills: this.kills, wave: this.wave,
       remaining: this.remaining, intermission: this.intermission, spawnTimer: this.spawnTimer, spawnCursor: { ...this.spawnCursor }, profiles: [...this.profiles.values()],
       enemies: this.enemies.map(e => ({ id: e.id, kind: e.typeKey, pos: xyz(e.pos), vel: xyz(e.vel), wanderDir: xyz(e.wanderDir), detourDir: xyz(e.detourDir), ...fields(e, enemyNumbers), state: e.state, onGround: e.onGround, blinkOn: e.blinkOn, blinkPending: e.blinkPending, path: e.path?.map(xyz) ?? null })),
       animals: this.animals.map(a => ({ id: a.id, kind: a.kind, pos: xyz(a.pos), vel: xyz(a.vel), dir: xyz(a.dir), ...fields(a, animalNumbers), state: a.state, onGround: a.onGround })),
@@ -166,7 +169,7 @@ export class Room {
       projectiles: this.projectiles.map(t => ({ id: t.id, ownerId: t.ownerId, pos: xyz(t.pos), vel: xyz(t.vel), life: t.life })) };
   }
 
-  addPlayer(socket, name, clientId) {
+  addPlayer(socket, name, clientId, skin) {
     if (!validClientId(clientId) || [...this.players.values()].some(p => p.clientId === clientId)) clientId = id();
     const profile = this.profiles.get(clientId);
     if (!profile && this.profiles.size >= 256) {
@@ -175,10 +178,10 @@ export class Room {
       if (!oldest) throw new Error('This world has reached its player profile limit.');
       this.profiles.delete(oldest.clientId);
     }
-    const player = { id: id(), clientId, name: cleanName(name, profile?.name), socket, pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: Math.PI, pitch: 0,
+    const player = { id: id(), clientId, name: cleanName(name, profile?.name), skin: normalizeSkin(skin ?? profile?.skin), socket, pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: Math.PI, pitch: 0,
       halfW: 0.3, height: 1.8, health: 100, maxHealth: 100, regenDelay: 0, tomatoes: this.gameMode === 'build' ? TOMATO_MAX : TOMATOES_PER_WAVE,
       hotbar: cleanHotbar(profile?.hotbar), slot: cleanSlot(profile?.slot),
-      active: true, carryId: null, lastPose: Date.now(), nextAttack: 0, nextPlace: 0, nextThrow: 0, nextSpawn: 0, nextRespawn: 0 };
+      active: true, sitting: false, seat: null, nextInteract: 0, carryId: null, lastPose: Date.now(), nextAttack: 0, nextPlace: 0, nextThrow: 0, nextSpawn: 0, nextRespawn: 0 };
     this.spawnPlayer(player);
     if (profile) {
       const pos = profile.pos;
@@ -199,6 +202,7 @@ export class Room {
 
   spawnPlayer(p) {
     this.drop(p);
+    p.sitting = false; p.seat = null;
     const world = this.world;
     const occupied = [...this.players.values()].filter(other => other !== p && other.health > 0);
     const safe = ground => ground && !boxCollides(world, ground.x + 0.5, ground.y + 1.01, ground.z + 0.5, p.halfW, p.height) &&
@@ -249,6 +253,16 @@ export class Room {
   acceptPose(p, msg) {
     if (p.health <= 0) return;
     const { x, y, z, yaw, pitch } = msg;
+    if (p.sitting) {
+      if (![x, y, z, yaw, pitch].every(Number.isFinite) || Math.abs(pitch) > Math.PI / 2 || Math.abs(yaw) > 1e6) return;
+      // Movement cannot relocate a seated player. Stand is an explicit action.
+      p.yaw = yaw; p.pitch = pitch; p.active = msg.active !== false;
+      if (msg.skin !== undefined) p.skin = normalizeSkin(msg.skin);
+      if (msg.hotbar !== undefined) p.hotbar = cleanHotbar(msg.hotbar);
+      if (msg.slot !== undefined) p.slot = cleanSlot(msg.slot);
+      if (Math.hypot(x - p.pos.x, y - p.pos.y, z - p.pos.z) > 0.05) this.correction(p);
+      return;
+    }
     const world = this.world;
     const now = Date.now();
     const dt = Math.max(0.02, Math.min(0.6, (now - p.lastPose) / 1000));
@@ -277,12 +291,13 @@ export class Room {
     p.yaw = yaw;
     p.pitch = pitch;
     p.active = msg.active !== false;
+    if (msg.skin !== undefined) p.skin = normalizeSkin(msg.skin);
     if (msg.hotbar !== undefined) p.hotbar = cleanHotbar(msg.hotbar);
     if (msg.slot !== undefined) p.slot = cleanSlot(msg.slot);
     p.lastPose = now;
   }
 
-  eye(p) { return p.pos.clone().add(new THREE.Vector3(0, 1.62, 0)); }
+  eye(p) { return p.pos.clone().add(new THREE.Vector3(0, p.sitting ? SEATED_EYE : 1.62, 0)); }
   dir(p) { const cp = Math.cos(p.pitch); return new THREE.Vector3(-Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp); }
   rayEntity(origin, dir, entities, maxDistance) {
     let best = null;
@@ -300,8 +315,18 @@ export class Room {
     const block = [x, y, z, type];
     this.blocks.set(key, block);
     this.pendingBlocks.set(key, block);
+    // Removing the chair releases its sitter; never leave a floating seat lock.
+    for (const p of this.players.values()) if (p.sitting && p.seat?.x === x && p.seat?.y === y && p.seat?.z === z && type !== BLOCK.COUCH) this.stand(p);
     if (persist) this.dirty();
     return true;
+  }
+
+  stand(p) {
+    if (!p.sitting) return;
+    p.sitting = false; p.seat = null; p.vel.set(0, 0, 0);
+    p.lastPose = Date.now(); p.budgetTime = p.lastPose;
+    p.moveBudget = 0.65; p.verticalBudget = 0.65;
+    this.correction(p);
   }
 
   action(p, msg) {
@@ -318,6 +343,8 @@ export class Room {
     }
     if (p.health <= 0) return;
     if (msg.action === 'drop') { this.drop(p); return; }
+    if (msg.action === 'stand') { this.stand(p); return; }
+    if (msg.action === 'interact' && p.sitting) { this.stand(p); return; }
     if (msg.action === 'reset') {
       if (p.id !== this.hostId) return;
       this.reset();
@@ -326,7 +353,24 @@ export class Room {
     if (msg.action === 'name') { this.nameBody(p, msg); return; }
     const origin = this.eye(p), direction = this.dir(p);
     const hit = this.world.raycast(origin, direction, 6);
-    if (msg.action === 'attack' || msg.action === 'grab') {
+    if (msg.action === 'interact') {
+      if (!hit || now < p.nextInteract) return;
+      p.nextInteract = now + 700;
+      const block = this.world.get(hit.x, hit.y, hit.z);
+      if (block === BLOCK.COUCH) {
+        const seat = { x: hit.x, y: hit.y, z: hit.z };
+        const pos = seatPosition(this.world, seat, p.halfW, p.height);
+        if (!pos || [...this.players.values()].some(other => other !== p && Math.hypot(other.pos.x - pos.x, other.pos.y - pos.y, other.pos.z - pos.z) < 0.9)) return;
+        this.drop(p); p.pos.copy(pos); p.vel.set(0, 0, 0);
+        p.sitting = true; p.seat = seat;
+        this.correction(p);
+      } else if (block === BLOCK.BED) {
+        this.timeOfDay = nextSleepTime(this.timeOfDay);
+        this.broadcast({ type: 'event', event: 'sleep', timeOfDay: this.timeOfDay, playerId: p.id });
+      } else return; // TVs stay off.
+      this.dirty();
+      this.broadcast(this.snapshot());
+    } else if (msg.action === 'attack' || msg.action === 'grab') {
       if (now < p.nextAttack || p.carryId) return;
       p.nextAttack = now + 280;
       const enemy = this.rayEntity(origin, direction, this.enemies, 4.5);
@@ -449,6 +493,7 @@ export class Room {
     this.broadcast({ type: 'event', event: 'kill', id: enemy.id, kind: enemy.typeKey, ...xyz(enemy.pos) });
   }
   hurt(p, damage) {
+    if (damage > 0) this.stand(p);
     p.health = Math.max(0, p.health - damage);
     p.regenDelay = 5;
     if (p.health <= 0) this.drop(p);
@@ -505,10 +550,12 @@ export class Room {
     if (!this.players.size) return;
     // This also captures movement, health regeneration and running simulations;
     // the store batches these notifications into its periodic disk checkpoint.
+    this.timeOfDay = (this.timeOfDay + dt / DAY_LENGTH) % 1;
     this.saveElapsed += dt;
     if (this.saveElapsed >= 1) { this.saveElapsed = 0; this.dirty(); }
     const living = [...this.players.values()].filter(p => p.health > 0);
     for (const p of living) {
+      if (p.sitting && !seatPosition(this.world, p.seat, p.halfW, p.height)) this.stand(p);
       p.regenDelay -= dt;
       if (p.regenDelay <= 0) p.health = Math.min(100, p.health + 4 * dt);
       // A stationary client must not keep its last running velocity indefinitely.
@@ -570,9 +617,9 @@ export class Room {
     if (this.pendingBlocks.size) { this.broadcast({ type: 'blocks', blocks: [...this.pendingBlocks.values()] }); this.pendingBlocks.clear(); }
   }
   snapshot() {
-    return { type: 'state', roomCode: this.code, worldName: this.name, hostId: this.hostId, gameMode: this.gameMode,
+    return { type: 'state', roomCode: this.code, worldName: this.name, hostId: this.hostId, gameMode: this.gameMode, timeOfDay: this.timeOfDay,
       wave: this.wave, score: this.score, kills: this.kills, remaining: this.remaining, intermission: Math.max(0, this.intermission),
-      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, ...pose(p), health: p.health, maxHealth: 100, tomatoes: p.tomatoes, hotbar: [...p.hotbar], slot: p.slot, carryId: p.carryId, active: p.active })),
+      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, skin: normalizeSkin(p.skin), ...pose(p), health: p.health, maxHealth: 100, tomatoes: p.tomatoes, hotbar: [...p.hotbar], slot: p.slot, carryId: p.carryId, active: p.active })),
       enemies: this.enemies.map(e => ({ id: e.id, kind: e.typeKey, ...xyz(e.pos), facing: e.facing, hp: e.hp, maxHp: e.maxHp, state: e.state, windup: e.windup, fuse: e.fuse, flash: e.flash })),
       animals: this.animals.map(a => ({ id: a.id, kind: a.kind, ...xyz(a.pos), facing: a.facing, state: a.state, walkPhase: a.walkPhase })),
       projectiles: this.projectiles.map(t => ({ id: t.id, ...xyz(t.pos) })),
@@ -586,6 +633,7 @@ export class Room {
     this.world.regenerate(randomInt(1, 1_000_000));
     this.blocks.clear(); this.pendingBlocks.clear();
     this.enemies.length = 0; this.animals.length = 0; this.projectiles.length = 0;
+    this.timeOfDay = DEFAULT_TIME_OF_DAY;
     this.score = 0; this.kills = 0; this.wave = 1; this.intermission = 0; this.spawnTimer = 1.5;
     this.remaining = this.gameMode === 'wave' ? 4 : 0;
     this.profiles.clear();

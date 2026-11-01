@@ -181,7 +181,7 @@ export async function createGameServer({ root = repositoryRoot, dataDir = path.r
         // Deliver all prior edits to existing players before the newcomer can
         // interact. Its welcome already contains the complete delta list.
         room.flushBlocks();
-        player = room.addPlayer(socket, msg.name, msg.clientId);
+        player = room.addPlayer(socket, msg.name, msg.clientId, msg.skin);
         send(socket, { type: 'welcome', version: 1, playerId: player.id, roomCode: room.code, hostId: room.hostId, savedWorld: worldSummary(room), world: room.worldInfo(), blocks: [...room.blocks.values()], state: room.snapshot() });
         room.broadcast(room.snapshot());
       } else if (!room) error(socket, 'NOT_JOINED', 'Create or join a room first.');

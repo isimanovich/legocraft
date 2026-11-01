@@ -32,6 +32,47 @@ solo play; **Save world now** saves it, and **New game — fresh world** starts 
 different world. Use **Saved worlds** to resume an earlier game. Dying
 and pressing `R` restarts in the same world and mode.
 
+### Colour, water and your minifig
+
+The world now has a vibrant sky, moving block clouds, a sun, moon and stars,
+and nearby shadows. A full day/night cycle takes ten minutes of active play.
+Solo time pauses with the game; a shared room keeps its clock while players are
+connected and pauses when empty. Time is stored with the world. Water produces
+small droplets and spreading ripples when you enter or swim; droplets fall under
+gravity and settle. These are visual effects and do not move terrain or flood
+builds. Shadow maps and particle counts are kept small; shadows refresh at ten updates
+per second, and touch controls use a smaller shadow map. Raspberry Pi 3 browser frame rate still depends on screen
+resolution and browser graphics support; the Node server does not render graphics.
+
+Open **Personalise your skin** on the start or pause screen to choose a preset,
+skin tone, shirt and trouser colours. The preview updates immediately. Your
+first-person sleeve wears the chosen colours, and other players see your minifig
+in multiplayer, including changes made while paused. Colours are remembered on
+this browser/device when storage is available; blocked storage still allows
+changes for the current tab. Shared player profiles also include these colours.
+
+### Furnish a home
+
+Open **Bag / E**, select a hotbar slot, then pick **TV (off)**, **Couch** or
+**Bed** at the end of the inventory. Place and break them just like bricks. Each
+is a compact one-block furnishing, with its front facing toward negative Z.
+They use the same one-block collision and selection space as bricks.
+
+Aim at furniture within six blocks and press **F** on a laptop or tap **Use**
+on a touchscreen:
+
+- **TV:** a decorative black screen that always stays off.
+- **Couch:** sit down and look around. Move, jump or Use again to stand. Leave
+  clear space above it; shared players cannot occupy the same couch seat.
+- **Bed:** rest until night if it is daytime, or until day if it is nighttime.
+  This immediately changes the shared sky for everyone in a multiplayer room.
+  Resting does not heal damage, skip enemy waves or grant protection.
+
+Furniture and the clock are included in Solo and shared saves. Existing world
+terrain, block IDs and save versions are preserved; old saves without a clock
+start in daylight. Sitting is transient: a resumed/rejoined player stands safely
+above the couch. Normal backup and save-format checks continue to apply.
+
 ### Play together
 
 1. Open the same server address on every laptop, iPad, or iPhone. Use the main
@@ -152,6 +193,7 @@ on-screen controls and does not require mouse locking or a physical keyboard:
 | Tomato | Throw an exploding tomato |
 | Tap a hotbar slot | Select that slot |
 | Bag | Open inventory; pick a slot and item, then tap Done to return |
+| Use | Sit on a couch, stand up, or sleep in a bed to switch day/night |
 | Name | Name the fallen Stalker under the crosshair or being carried; Save name / Cancel dismisses the keyboard |
 | Pause | Open the menu, resume, switch controls, or start a new world (solo pauses) |
 | Rebuild yourself | Restart after dying |
@@ -536,6 +578,8 @@ PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
   CHROMIUM_PATH=/usr/bin/chromium node --test test/solo-saves.mjs
 PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
   CHROMIUM_PATH=/usr/bin/chromium node --test test/saves-browser.mjs
+PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
+  CHROMIUM_PATH=/usr/bin/chromium node --test test/home-browser.mjs
 ```
 
 With Playwright and its Chromium already installed in your own development setup,
@@ -545,3 +589,8 @@ browser sessions against the actual Node
 server to check the shared-room workflow. The saves browser suite checks the
 saved-world menus and resume workflow. Chromium's device emulation does not
 replace testing Safari and touch/audio behavior on a physical iPad or iPhone.
+
+The additional `npm run test:home-browser` suite checks skin preferences, furniture
+placement and interactions, day/night save restoration, shadows and water splash
+physics. Run browser suites individually on machines using software rendering;
+several simultaneous worlds can exceed the tests' timing limits.

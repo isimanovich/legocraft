@@ -2,6 +2,15 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { RemotePlayers } from '../src/remote-players.js';
+import { DEFAULT_SKIN, normalizeSkin, loadSkin, saveSkin } from '../src/skins.js';
+
+assert.deepEqual(normalizeSkin({ skin: '#FFEEDD', shirt: 'url(evil)', pants: -1 }), { ...DEFAULT_SKIN, skin: '#ffeedd' }, 'skin colours are normalized and malformed fields use safe defaults');
+assert.deepEqual(loadSkin({ getItem() { throw Error('Storage blocked'); } }), DEFAULT_SKIN, 'blocked storage keeps skin controls usable');
+let storedSkin;
+const storage = { getItem: () => storedSkin, setItem(_key, value) { storedSkin = value; } };
+const customSkin = { skin: '#a57755', shirt: '#d63282', pants: '#22aa55' };
+assert.deepEqual(saveSkin(customSkin, storage), customSkin);
+assert.deepEqual(loadSkin(storage), customSkin, 'personalized colours survive reloading device preferences');
 
 const scene = new THREE.Scene();
 const unrelated = new THREE.Group();
@@ -33,6 +42,20 @@ remotes.updatePlayers([{ ...player, health: 0 }], self.id);
 assert.equal(peer.label, 'Friend (respawning)');
 assert.equal(peer.healthFill.visible, false);
 assert.equal(peer.materials.torso.opacity, 0.25);
+remotes.updatePlayers([{ ...player, skin: customSkin }], self.id);
+assert.equal(peer.materials.skin.color.getHexString(), 'a57755', 'peers show customized skin tone');
+assert.equal(peer.materials.torso.color.getHexString(), 'd63282', 'peers show customized shirts');
+assert.equal(peer.materials.legs.color.getHexString(), '22aa55', 'peers show customized trousers');
+remotes.updatePlayers([{ ...player, skin: { skin: '<script>', shirt: {}, pants: null } }], self.id);
+assert.equal(peer.materials.skin.color.getHexString(), DEFAULT_SKIN.skin.slice(1), 'invalid network colours cannot affect rendering');
+remotes.updatePlayers([{ ...player, sitting: true }], self.id);
+remotes.update(0.1);
+assert.equal(peer.avatar.position.y, -0.9, 'sitting lowers the avatar to the cushion');
+assert.equal(peer.legL.rotation.x, -Math.PI / 2, 'seated peers bend their legs');
+assert.equal(peer.label, 'Friend (sitting)');
+remotes.updatePlayers([player], self.id);
+remotes.update(0.1);
+assert.equal(peer.avatar.position.y, 0, 'standing restores normal avatar height');
 
 let materialDisposals = 0;
 let geometryDisposals = 0;

@@ -26,6 +26,9 @@ export const BLOCK = {
   DARKRED: 20,
   PLANKS: 21,
   GOLD: 22,
+  TV: 23,
+  COUCH: 24,
+  BED: 25,
 };
 
 /** Columns at or below this height are flooded. */
@@ -54,6 +57,9 @@ export const BLOCK_INFO = {
   [BLOCK.DARKRED]: { name: 'Dark red brick', color: 0x720e0f },
   [BLOCK.PLANKS]: { name: 'Plank', color: 0xb67c4a, top: 0xc98d57, noStud: true },
   [BLOCK.GOLD]: { name: 'Gold brick', color: 0xdbac34, top: 0xe8c04a },
+  [BLOCK.TV]: { name: 'TV (off)', color: 0x222733, noStud: true, furniture: true },
+  [BLOCK.COUCH]: { name: 'Couch', color: 0x25a995, noStud: true, furniture: true },
+  [BLOCK.BED]: { name: 'Bed', color: 0xde455c, noStud: true, furniture: true },
 };
 
 /** Every brick you can place (inventory order). The hotbar holds a subset of these plus tools. */
@@ -61,6 +67,7 @@ export const PLACEABLE = [
   BLOCK.RED, BLOCK.BLUE, BLOCK.YELLOW, BLOCK.WHITE, BLOCK.GRASS, BLOCK.LIME, BLOCK.LEAVES,
   BLOCK.ORANGE, BLOCK.PINK, BLOCK.PURPLE, BLOCK.AZURE, BLOCK.DARKRED, BLOCK.GOLD,
   BLOCK.BLACK, BLOCK.DARKGREY, BLOCK.STONE, BLOCK.SAND, BLOCK.DIRT, BLOCK.WOOD, BLOCK.PLANKS,
+  BLOCK.TV, BLOCK.COUCH, BLOCK.BED,
 ];
 /** Default hotbar: a sword, then a spread of bricks. */
 export const DEFAULT_HOTBAR = ['sword', BLOCK.RED, BLOCK.BLUE, BLOCK.YELLOW, BLOCK.WHITE, BLOCK.STONE, BLOCK.WOOD, BLOCK.GRASS, BLOCK.LEAVES];
@@ -603,13 +610,54 @@ export class World {
           const t = this.data[this.idx(x, y, z)];
           if (t === BLOCK.AIR) continue;
           const info = BLOCK_INFO[t];
+          // Furniture uses the same stable voxel for collision, picking and saves,
+          // with inset components merged into the chunk (no per-item draw calls).
+          if (info.furniture) {
+            const box = (bx, by, bz, bw, bh, bd, color) => {
+              tmpColor.setHex(color);
+              for (const face of FACES) {
+                const corners = face.c.map(cc => [x + bx + cc[0] * bw, y + by + cc[1] * bh, z + bz + cc[2] * bd]);
+                pushQuad(corners, face.n, tmpColor.r * face.shade, tmpColor.g * face.shade, tmpColor.b * face.shade);
+              }
+            };
+            if (t === BLOCK.TV) {
+              box(.22, 0, .28, .56, .08, .44, 0x303541);
+              box(.43, .08, .43, .14, .18, .14, 0x303541);
+              box(.04, .23, .34, .92, .73, .22, 0x222733);
+              // Two dark faces keep the screen off from either side; no light,
+              // emissive material, video, animation or network request is used.
+              box(.09, .29, .325, .82, .60, .25, 0x080e17);
+            } else if (t === BLOCK.COUCH) {
+              box(.10, 0, .12, .12, .15, .12, 0x69472f);
+              box(.78, 0, .12, .12, .15, .12, 0x69472f);
+              box(.10, 0, .77, .12, .15, .12, 0x69472f);
+              box(.78, 0, .77, .12, .15, .12, 0x69472f);
+              box(.04, .14, .10, .92, .34, .82, 0x168d83);
+              box(.14, .48, .12, .35, .12, .57, 0x46cab0);
+              box(.51, .48, .12, .35, .12, .57, 0x46cab0);
+              box(.04, .48, .72, .92, .48, .20, 0x25a995);
+              box(.02, .35, .08, .13, .43, .68, 0x25a995);
+              box(.85, .35, .08, .13, .43, .68, 0x25a995);
+            } else {
+              box(.06, 0, .06, .12, .24, .12, 0x8a593c);
+              box(.82, 0, .06, .12, .24, .12, 0x8a593c);
+              box(.06, 0, .82, .12, .24, .12, 0x8a593c);
+              box(.82, 0, .82, .12, .24, .12, 0x8a593c);
+              box(.02, .18, .02, .96, .19, .96, 0xa97049);
+              box(.06, .37, .05, .88, .20, .90, 0xf4ede3);
+              box(.05, .57, .32, .90, .08, .63, 0xe64d67);
+              box(.18, .57, .10, .64, .12, .21, 0xffffff);
+              box(.02, .37, .91, .96, .43, .07, 0xa97049);
+            }
+            continue;
+          }
           const variation = 0.9 + 0.1 * hash3(x, y, z, 3);
           for (let f = 0; f < 6; f++) {
             const face = FACES[f];
             const nx = x + face.n[0];
             const ny = y + face.n[1];
             const nz = z + face.n[2];
-            if (ny < this.sy && this.get(nx, ny, nz) !== BLOCK.AIR) continue;
+            if (ny < this.sy && this.get(nx, ny, nz) !== BLOCK.AIR && !BLOCK_INFO[this.get(nx, ny, nz)]?.furniture) continue;
             if (ny >= this.sy) {
               // top of world: still render
             }
@@ -642,6 +690,8 @@ export class World {
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, this.material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     mesh.matrixAutoUpdate = false;
     this.group.add(mesh);
     this.meshes[ci] = mesh;

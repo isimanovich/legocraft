@@ -152,3 +152,91 @@ test('new browsers evict the oldest offline profile before reaching an unsavable
   assert.equal(restored.profiles.size, 256, 'the complete bounded save can be reopened');
   assert.equal(restored.addPlayer({}, 'Alice', aliceId).health, 27);
 });
+
+test('furniture appends stable palette IDs and older saves still decode', () => {
+  assert.equal(BLOCK.GOLD, 22);
+  assert.deepEqual([BLOCK.TV, BLOCK.COUCH, BLOCK.BED], [23, 24, 25]);
+  const data = new Uint8Array(WORLD_SIZE.sizeX * WORLD_SIZE.sizeY * WORLD_SIZE.sizeZ);
+  const oldTerrain = encodeTerrain(data);
+  oldTerrain.palette = oldTerrain.palette.slice(0, 23);
+  assert.deepEqual(decodeTerrain(oldTerrain), data, 'pre-furniture terrain remains readable');
+  for (const type of [BLOCK.TV, BLOCK.COUCH, BLOCK.BED]) data[type * 1000] = type;
+  assert.deepEqual(decodeTerrain(encodeTerrain(data)), data, 'furniture survives full terrain saves');
+});
+
+test('furniture interactions validate reach, seat occupancy, movement and shared sleep time', () => {
+  const messages = [];
+  const room = new Room('ABCDEF', 'build', (_, message) => messages.push(message), () => {}, { seed: 42 });
+  const p = room.addPlayer({}, 'Alice', aliceId);
+  for (let x = 7; x <= 14; x++) for (let z = 7; z <= 16; z++) for (let y = 39; y < 47; y++) room.world.set(x, y, z, y === 39 ? BLOCK.STONE : BLOCK.AIR);
+  room.edit(10, 40, 11, BLOCK.COUCH);
+  p.pos.set(10.5, 40.01, 14.5); p.yaw = 0; p.pitch = Math.atan2(40.5 - (p.pos.y + 1.62), 3);
+  room.action(p, { action: 'interact', x: 100, y: 1, z: 100 });
+  assert.equal(p.sitting, true, 'server picks the visible couch, ignoring client target coordinates');
+  assert.deepEqual(p.seat, { x: 10, y: 40, z: 11 });
+  assert.deepEqual(vector(p.pos), { x: 10.5, y: 41.01, z: 11.5 });
+  const seated = vector(p.pos);
+  room.acceptPose(p, { x: 13, y: 43, z: 13, yaw: 0.3, pitch: 0 });
+  assert.deepEqual(vector(p.pos), seated, 'seated movement cannot teleport');
+  assert.equal(p.yaw, 0.3, 'seated players can look around');
+  assert.equal(room.snapshot().players[0].sitting, true);
+  assert.equal(messages.at(-1).type, 'correction');
+  room.hurt(p, 0);
+  assert.equal(p.sitting, true, 'zero damage does not interrupt a seat');
+  room.hurt(p, 5);
+  assert.equal(p.sitting, false, 'actual damage releases the seated player');
+  p.pos.set(10.5, 40.01, 14.5); p.yaw = 0; p.pitch = Math.atan2(40.5 - (p.pos.y + 1.62), 3); p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(p.sitting, true);
+  room.action(p, { action: 'stand' });
+  assert.equal(p.sitting, false);
+  assert.equal(p.seat, null);
+
+  const visitor = room.addPlayer({}, 'Visitor', 'ffeeddcc-1234-4567-8888-123456789abc');
+  visitor.pos.set(10.5, 41.01, 11.5);
+  p.pos.set(10.5, 40.01, 14.5); p.yaw = 0; p.pitch = Math.atan2(40.5 - (p.pos.y + 1.62), 3); p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(p.sitting, false, 'an occupied seat cannot stack players');
+  room.removePlayer(visitor);
+  room.edit(10, 42, 11, BLOCK.STONE); p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(p.sitting, false, 'blocked headroom prevents unsafe seating');
+  room.edit(10, 42, 11, BLOCK.AIR);
+
+  p.pos.set(10.5, 40.01, 14.5); p.yaw = 0; p.pitch = Math.atan2(40.5 - (p.pos.y + 1.62), 3); p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(p.sitting, true);
+  room.edit(10, 40, 11, BLOCK.AIR);
+  assert.equal(p.sitting, false, 'breaking a couch releases its sitter');
+
+  room.edit(10, 40, 11, BLOCK.BED);
+  p.pos.set(10.5, 40.01, 14.5); p.yaw = 0; p.pitch = Math.atan2(40.5 - (p.pos.y + 1.62), 3); p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(room.timeOfDay, 0.75, 'day sleeps forward to night');
+  assert.equal(room.snapshot().timeOfDay, 0.75);
+  assert.equal(room.worldInfo().timeOfDay, 0.75);
+  p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(room.timeOfDay, 0.25, 'night sleeps forward to day');
+  room.edit(10, 40, 11, BLOCK.TV); p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(room.timeOfDay, 0.25, 'TV interactions never turn it on or change the time');
+  room.edit(10, 40, 11, BLOCK.BED); p.pos.z = 21; p.nextInteract = 0;
+  room.action(p, { action: 'interact' });
+  assert.equal(room.timeOfDay, 0.25, 'distant furniture cannot be used');
+});
+
+test('clock and furniture survive disk saves; old rooms default to daytime', () => {
+  const room = makeRoom({ seed: 42, gameMode: 'build' });
+  assert.equal(room.timeOfDay, 0.25);
+  room.timeOfDay = 0.75;
+  room.edit(10, 41, 11, BLOCK.TV);
+  room.edit(11, 41, 11, BLOCK.COUCH);
+  room.edit(12, 41, 11, BLOCK.BED);
+  const restored = makeRoom(diskRoundTrip(room));
+  assert.equal(restored.timeOfDay, 0.75);
+  for (const [x, type] of [[10, BLOCK.TV], [11, BLOCK.COUCH], [12, BLOCK.BED]]) assert.equal(restored.world.get(x, 41, 11), type);
+  restored.addPlayer({}, 'Alice', aliceId);
+  restored.tick(0.06);
+  assert.ok(Math.abs(restored.timeOfDay - 0.7501) < 1e-8);
+});

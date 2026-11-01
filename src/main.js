@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { World, BLOCK, BLOCK_INFO, PLACEABLE, DEFAULT_HOTBAR } from './world.js';
 import { Player } from './player.js';
+import { Atmosphere } from './atmosphere.js';
+import { DAY_LENGTH, DEFAULT_TIME_OF_DAY, SEATED_EYE, nextSleepTime, seatPosition } from './furniture.js';
+import { loadSkin, saveSkin, SKIN_PRESETS } from './skins.js';
 import { Enemy, findSpawnSpot, BLAST_RADIUS, BLAST_BLOCK_RADIUS, makeNameTag, NAME_TAG_SIZE } from './enemies.js';
 import { Debris } from './debris.js';
 import { Ragdolls, CARRY_DISTANCE } from './ragdoll.js';
@@ -34,14 +37,9 @@ scene.fog = new THREE.Fog(SKY, 70, 150);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 300);
 scene.add(camera);
 
-const hemi = new THREE.HemisphereLight(0xdfefff, 0x6a7a55, 0.95);
-scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xffffff, 1.1);
-sun.position.set(60, 100, 30);
-scene.add(sun);
-
 const world = new World(scene, { sizeX: 144, sizeZ: 144, sizeY: 48, seed: (Math.random() * 1e6) | 0 });
 const player = new Player(camera, world);
+const atmosphere = new Atmosphere(scene, renderer, world, camera);
 const debris = new Debris(scene, world);
 const sfx = new Sfx();
 const ragdolls = new Ragdolls(scene, world);
@@ -110,6 +108,14 @@ function buildHandSword() {
   return g;
 }
 
+const sleeveMaterial = new THREE.MeshLambertMaterial({ color: 0x0055bf });
+const wristMaterial = new THREE.MeshLambertMaterial({ color: 0xf2cd37 });
+const armView = new THREE.Group();
+const sleeve = new THREE.Mesh(new THREE.BoxGeometry(.16, .18, .34), sleeveMaterial);
+const wrist = new THREE.Mesh(new THREE.BoxGeometry(.15, .15, .16), wristMaterial);
+sleeve.position.set(.32, -.45, -.32); wrist.position.set(.32, -.43, -.55);
+armView.add(sleeve, wrist); camera.add(armView);
+
 // ---- Items & hotbar --------------------------------------------------------------
 /** Hotbar entries: a block id (number) or the string 'sword'. */
 const hotbar = [...DEFAULT_HOTBAR];
@@ -126,6 +132,7 @@ const state = {
   kills: 0,
   wave: 1,
   elapsed: 0,
+  timeOfDay: DEFAULT_TIME_OF_DAY,
   waveRemaining: 0, // enemies still to spawn this wave
   intermission: 0, // seconds until the next wave starts (after a clear)
   spawnTimer: 2,
@@ -153,6 +160,8 @@ const remotePlayers = new RemotePlayers(scene);
 let networkEntities;
 const session = new MultiplayerSession({ onPacket: receiveNetworkPacket, onDisconnect: disconnected });
 session.getInventory = () => ({ hotbar, slot: state.slot });
+let skin = loadSkin();
+session.getSkin = () => skin;
 let soloRecord = null;
 let saveBusy = false;
 let soloSavePending;
@@ -161,6 +170,32 @@ let newGamePending = false;
 let sharedSaveTimer;
 let savedListGeneration = 0;
 const soloSaves = new SoloSaveStore();
+
+// Personal colours remain a device preference, independent of any saved world.
+function updateSkin() {
+  skin = saveSkin({ skin: $('skin-tone').value, shirt: $('skin-shirt').value, pants: $('skin-pants').value });
+  const preview = $('skin-preview');
+  preview.style.setProperty('--skin', skin.skin);
+  preview.style.setProperty('--shirt', skin.shirt);
+  preview.style.setProperty('--pants', skin.pants);
+  sleeveMaterial.color.set(skin.shirt);
+  wristMaterial.color.set(skin.skin);
+}
+$('skin-tone').value = skin.skin;
+$('skin-shirt').value = skin.shirt;
+$('skin-pants').value = skin.pants;
+for (const id of ['skin-tone', 'skin-shirt', 'skin-pants']) $(id).addEventListener('input', updateSkin);
+for (const preset of SKIN_PRESETS) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'skin-preset'; button.textContent = preset.name;
+  button.addEventListener('click', () => {
+    $('skin-tone').value = preset.skin; $('skin-shirt').value = preset.shirt; $('skin-pants').value = preset.pants;
+    updateSkin();
+  });
+  $('skin-presets').append(button);
+}
+$('skin-picker').addEventListener('click', (event) => event.stopPropagation());
+updateSkin();
 
 /** Minifigs in a wave. Grows every wave; a wave ends only when all of them are destroyed. */
 function waveSize(wave) {
@@ -184,10 +219,14 @@ function startWave(wave) {
 // ---- HUD -------------------------------------------------------------------
 /** Fill a slot element with an item's icon (brick swatch or sword). */
 function renderSlotIcon(el, item) {
-  el.querySelector('.brick, .sword')?.remove();
+  el.querySelector('.brick, .sword, .furniture-icon')?.remove();
   const icon = document.createElement('div');
   if (item === 'sword') {
     icon.className = 'sword';
+  } else if ([BLOCK.TV, BLOCK.COUCH, BLOCK.BED].includes(item)) {
+    icon.className = 'furniture-icon';
+    icon.textContent = item === BLOCK.TV ? '▣' : item === BLOCK.COUCH ? '▰' : '▱';
+    icon.dataset.furniture = item === BLOCK.TV ? 'tv' : item === BLOCK.COUCH ? 'couch' : 'bed';
   } else {
     icon.className = 'brick';
     icon.style.background = itemColor(item);
@@ -241,6 +280,7 @@ function updateHud() {
   $('wave').textContent = state.wave;
   $('alive').textContent = state.waveRemaining > 0 ? `${enemies.length} (+${state.waveRemaining})` : `${enemies.length}`;
   $('tomatoes').textContent = state.tomatoes;
+  $('day-phase').textContent = state.timeOfDay < 0.5 ? 'Day' : 'Night';
   updateCompass();
   const hp = Math.max(0, Math.round(player.health));
   $('healthfill').style.width = `${(hp / player.maxHealth) * 100}%`;
@@ -304,6 +344,7 @@ function openInventory() {
   if (state.mode !== 'playing' || state.naming || state.inventoryOpen) return;
   state.inventoryOpen = true;
   state.mode = 'paused';
+  $('furniture-hint').hidden = true;
   clearInput();
   syncControls();
   renderInventoryHotbar();
@@ -784,6 +825,9 @@ async function loadNetworkWorld(packet) {
 }
 
 function setNetworkPosition(position) {
+  player.sitting = !!position.sitting;
+  player.seat = position.seat ?? null;
+  player.eye = player.sitting ? SEATED_EYE : 1.62;
   player.pos.set(position.x, position.y, position.z);
   player.vel.set(0, 0, 0);
   player.yaw = position.yaw ?? player.yaw;
@@ -814,6 +858,10 @@ function receiveNetworkPacket(packet) {
     if (packet.event === 'explosion') {
       debris.burst(packet.x, packet.y, packet.z, 0xd62b1e, 18, 0.2, 7);
       sfx.explosion();
+    } else if (packet.event === 'sleep') {
+      state.timeOfDay = packet.timeOfDay;
+      showWaveBanner(packet.timeOfDay < .5 ? 'GOOD MORNING' : 'GOOD EVENING');
+      notice('Someone rested until ' + (packet.timeOfDay < .5 ? 'day.' : 'night.'));
     } else if (packet.event === 'kill') sfx.killEnemy();
     else if (packet.event === 'break') {
       debris.burst(packet.x + 0.5, packet.y + 0.5, packet.z + 0.5, BLOCK_INFO[packet.block]?.color ?? 0xaaaaaa, 8);
@@ -835,7 +883,7 @@ function applyNetworkState(snapshot) {
   session.hostId = snapshot.hostId;
   if (snapshot.worldName || snapshot.name) session.worldName = snapshot.worldName || snapshot.name;
   Object.assign(state, { score: snapshot.score, kills: snapshot.kills, wave: snapshot.wave,
-    waveRemaining: snapshot.remaining, intermission: snapshot.intermission, tomatoes: own.tomatoes });
+    waveRemaining: snapshot.remaining, intermission: snapshot.intermission, tomatoes: own.tomatoes, timeOfDay: snapshot.timeOfDay ?? .25 });
   if (own.health > 0 && (networkRespawning || state.mode === 'dead')) {
     cancelRespawnWait();
     setNetworkPosition(own);
@@ -843,6 +891,12 @@ function applyNetworkState(snapshot) {
     state.mode = 'ready';
     showStartOverlay('ready');
     if (controlMode === 'touch') play();
+  }
+  if (player.sitting !== !!own.sitting) setNetworkPosition(own);
+  else if (own.sitting) {
+    // Keep the server seat anchor without rewinding local camera input.
+    player.pos.set(own.x, own.y, own.z); player.seat = own.seat;
+    player.vel.set(0, 0, 0); player.syncCamera();
   }
   player.health = own.health;
   if (own.health < oldHealth) { state.flash = 1; sfx.hurt(); }
@@ -892,6 +946,42 @@ function disconnected(roomCode) {
   newGame();
 }
 
+// Furniture uses the same blocked line of sight and reach as building.
+function useFurniture() {
+  if (state.mode !== 'playing' || state.naming) return;
+  if (player.sitting) {
+    player.stand();
+    if (session.connected) networkAction('stand');
+    return;
+  }
+  if (session.connected) {
+    const hit = world.raycast(player.eyePos(), player.lookDir(new THREE.Vector3()), 6);
+    if (hit && world.get(hit.x, hit.y, hit.z) === BLOCK.TV) notice('TV is off.');
+    networkAction('interact'); return;
+  }
+  const hit = world.raycast(player.eyePos(), player.lookDir(new THREE.Vector3()), 6);
+  if (!hit) return;
+  const block = world.get(hit.x, hit.y, hit.z);
+  if (block === BLOCK.TV) { notice('TV is off.'); return; }
+  if (block === BLOCK.COUCH) {
+    const seat = { x: hit.x, y: hit.y, z: hit.z };
+    const pos = seatPosition(world, seat, player.halfW, player.height);
+    if (ragdolls.carrying || !pos) {
+      notice('Make room above the couch and put down anything you are carrying.'); return;
+    }
+    player.sitting = true;
+    player.seat = seat;
+    player.pos.copy(pos);
+    player.vel.set(0, 0, 0); player.eye = SEATED_EYE; player.syncCamera();
+    notice('Sitting. Move, jump or Use to stand.');
+  } else if (block === BLOCK.BED) {
+    state.timeOfDay = nextSleepTime(state.timeOfDay);
+    showWaveBanner(state.timeOfDay < .5 ? 'GOOD MORNING' : 'GOOD EVENING');
+    notice('Rested until ' + (state.timeOfDay < .5 ? 'day.' : 'night.'));
+    saveSoloWorld({ quiet: true });
+  }
+}
+
 // ---- Input -----------------------------------------------------------------
 const canvas = renderer.domElement;
 let controlMode = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 ? 'touch' : 'laptop';
@@ -916,6 +1006,7 @@ const touchControls = new TouchControls({
     else if (action === 'pause') pauseGame();
     else if (action === 'name') beginNaming();
     else if (action === 'tomato') throwTomato();
+    else if (action === 'interact') useFurniture();
     else if (action.startsWith('slot:')) setSlot(Number(action.slice(5)));
   },
 });
@@ -945,6 +1036,7 @@ function clearInput() {
 
 function syncControls() {
   const touch = controlMode === 'touch';
+  atmosphere.setQuality(controlMode);
   document.body.classList.toggle('touch-mode', touch);
   $('input-laptop').setAttribute('aria-pressed', String(!touch));
   $('input-touch').setAttribute('aria-pressed', String(touch));
@@ -983,6 +1075,7 @@ function pauseGame() {
   if (state.mode !== 'playing') return;
   if (state.naming) endNaming(false);
   state.mode = 'paused';
+  $('furniture-hint').hidden = true;
   clearInput();
   syncControls();
   if (document.pointerLockElement === canvas) document.exitPointerLock?.();
@@ -1065,7 +1158,8 @@ document.addEventListener('keydown', (e) => {
   }
   if (state.mode !== 'playing') return;
   if (e.code === 'Escape') { e.preventDefault(); pauseGame(); return; }
-  if (controlMode !== 'laptop' || e.repeat && ['KeyE', 'KeyN', 'KeyQ'].includes(e.code)) return;
+  if (controlMode !== 'laptop' || e.repeat && ['KeyE', 'KeyN', 'KeyQ', 'KeyF'].includes(e.code)) return;
+  if (e.code === 'KeyF') { e.preventDefault(); useFurniture(); return; }
   if (e.code === 'KeyN') {
     e.preventDefault();
     beginNaming();
@@ -1511,6 +1605,8 @@ function resetRun() {
   enemies.length = 0;
   pendingDetonations.length = 0;
   debris.clear();
+  atmosphere.reset();
+  player.stand();
   ragdolls.clear();
   tomatoes.clear();
   for (const a of [...animals]) removeAnimal(a);
@@ -1522,7 +1618,7 @@ function resetRun() {
   $('carry-hint').style.opacity = 0;
   Object.assign(state, {
     score: 0, kills: 0, wave: 1, elapsed: 0, waveRemaining: 0, intermission: 0, spawnTimer: 2, flash: 0, swing: 0,
-    tomatoes: 0, throwCooldown: 0,
+    tomatoes: 0, throwCooldown: 0, timeOfDay: DEFAULT_TIME_OF_DAY,
   });
   clearInput();
   syncControls();
@@ -1551,7 +1647,9 @@ function restart() {
     }, 3000);
     return;
   }
+  const timeOfDay = state.timeOfDay;
   resetRun();
+  state.timeOfDay = timeOfDay;
   player.spawn();
   if (state.gameMode === 'wave') startWave(1);
   else state.tomatoes = TOMATO_MAX;
@@ -1635,6 +1733,7 @@ function frame(now) {
 
   if (state.mode === 'playing' && !state.naming) {
     state.elapsed += dt;
+    if (!session.connected) state.timeOfDay = (state.timeOfDay + dt / DAY_LENGTH) % 1;
 
     // Wave flow (wave mode only): spawn the wave's quota a few at a time; when every
     // minifig is destroyed, pause briefly, then start the next (harder) wave.
@@ -1649,7 +1748,9 @@ function frame(now) {
     }
 
     const authoritativeHealth = player.health;
+    const wasSitting = player.sitting;
     player.update(dt);
+    if (wasSitting && !player.sitting && session.connected) networkAction('stand');
     if (session.connected) player.health = authoritativeHealth;
 
     if (!session.connected) {
@@ -1711,6 +1812,10 @@ function frame(now) {
     player.lookDir(_dir);
     const hit = world.raycast(_eye, _dir, 6);
     const target = enemyUnderCrosshair(4.5);
+    const furnishing = hit && [BLOCK.TV, BLOCK.COUCH, BLOCK.BED].includes(world.get(hit.x, hit.y, hit.z));
+    $('furniture-hint').textContent = player.sitting ? 'Use / F · Stand up' : furnishing
+      ? (world.get(hit.x, hit.y, hit.z) === BLOCK.TV ? 'TV · Off' : world.get(hit.x, hit.y, hit.z) === BLOCK.COUCH ? 'Use / F · Sit on couch' : 'Use / F · Sleep until ' + (state.timeOfDay < .5 ? 'night' : 'day')) : '';
+    $('furniture-hint').hidden = !player.sitting && !furnishing;
     if (hit && (!target || hit.dist < target.dist) && world.get(hit.x, hit.y, hit.z) !== BLOCK.BEDROCK) {
       outline.visible = true;
       outline.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
@@ -1725,6 +1830,7 @@ function frame(now) {
     remotePlayers.update(dt);
     networkEntities.update(dt);
   }
+  atmosphere.update(dt, player, state.timeOfDay);
   debris.update(dt);
   world.update(4);
 
@@ -1751,13 +1857,15 @@ function frame(now) {
 
 // ---- Boot -----------------------------------------------------------------------
 function boot() {
-  refreshSavedWorlds();
   world.generate();
   buildWorld(() => {
     player.spawn();
     setSlot(0);
     state.mode = 'ready';
     showStartOverlay('pick');
+    // Start the network deadline after initial mesh/shader work, so slow graphics
+    // startup cannot abort a healthy saved-world catalog response.
+    refreshSavedWorlds();
   });
   requestAnimationFrame(frame);
 }

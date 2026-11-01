@@ -1,3 +1,5 @@
+import { loadSkin } from './skins.js';
+
 /** Same-origin LAN transport. Rendering and game rules stay outside this class. */
 export class MultiplayerSession {
   constructor({ onPacket, onDisconnect }) {
@@ -10,6 +12,7 @@ export class MultiplayerSession {
     this.hostId = null;
     this.poseElapsed = 0;
     this.getInventory = () => ({});
+    this.getSkin = loadSkin;
     this.worldName = '';
     // This is a reconnect identity for a trusted home network, not an account.
     try { this.clientId = localStorage.getItem('legocraft-player-id'); } catch { /* Optional storage. */ }
@@ -37,7 +40,7 @@ export class MultiplayerSession {
         fail('The multiplayer server did not respond. Start the Node server on the Pi, then try again.');
         socket.close();
       }, 10000);
-      socket.addEventListener('open', () => socket.send(JSON.stringify({ ...request, clientId: this.clientId })));
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ ...request, skin: this.getSkin(), clientId: this.clientId })));
       socket.addEventListener('message', ({ data }) => {
         if (this.socket !== socket) return;
         let packet;
@@ -79,7 +82,7 @@ export class MultiplayerSession {
   pose(player, active) {
     this.poseElapsed = 0;
     return this.send({ type: 'pose', x: player.pos.x, y: player.pos.y, z: player.pos.z,
-      yaw: player.yaw, pitch: player.pitch, active, ...this.getInventory() });
+      yaw: player.yaw, pitch: player.pitch, active, skin: this.getSkin(), ...this.getInventory() });
   }
 
   update(dt, player, active) {

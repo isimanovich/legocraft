@@ -29,13 +29,14 @@ export const BLOCK = {
   TV: 23,
   COUCH: 24,
   BED: 25,
+  LADDER: 26,
 };
 
 /** Columns at or below this height are flooded. */
 export const SEA = 11;
 
 export const BLOCK_INFO = {
-  [BLOCK.GRASS]: { name: 'Grass brick', color: 0x237841, top: 0x2e9a4f },
+  [BLOCK.GRASS]: { name: 'Grass brick', color: 0x765035, top: 0x55b947, rim: 0x479c3d, noStud: true },
   [BLOCK.DIRT]: { name: 'Brown brick', color: 0x583927 },
   [BLOCK.STONE]: { name: 'Grey brick', color: 0x9ba19d },
   [BLOCK.SAND]: { name: 'Tan brick', color: 0xe4cd9e },
@@ -60,6 +61,7 @@ export const BLOCK_INFO = {
   [BLOCK.TV]: { name: 'TV (off)', color: 0x222733, noStud: true, furniture: true },
   [BLOCK.COUCH]: { name: 'Couch', color: 0x25a995, noStud: true, furniture: true },
   [BLOCK.BED]: { name: 'Bed', color: 0xde455c, noStud: true, furniture: true },
+  [BLOCK.LADDER]: { name: 'Ladder', color: 0xb98148, noStud: true, ladder: true },
 };
 
 /** Every brick you can place (inventory order). The hotbar holds a subset of these plus tools. */
@@ -67,7 +69,7 @@ export const PLACEABLE = [
   BLOCK.RED, BLOCK.BLUE, BLOCK.YELLOW, BLOCK.WHITE, BLOCK.GRASS, BLOCK.LIME, BLOCK.LEAVES,
   BLOCK.ORANGE, BLOCK.PINK, BLOCK.PURPLE, BLOCK.AZURE, BLOCK.DARKRED, BLOCK.GOLD,
   BLOCK.BLACK, BLOCK.DARKGREY, BLOCK.STONE, BLOCK.SAND, BLOCK.DIRT, BLOCK.WOOD, BLOCK.PLANKS,
-  BLOCK.TV, BLOCK.COUCH, BLOCK.BED,
+  BLOCK.TV, BLOCK.COUCH, BLOCK.BED, BLOCK.LADDER,
 ];
 /** Default hotbar: a sword, then a spread of bricks. */
 export const DEFAULT_HOTBAR = ['sword', BLOCK.RED, BLOCK.BLUE, BLOCK.YELLOW, BLOCK.WHITE, BLOCK.STONE, BLOCK.WOOD, BLOCK.GRASS, BLOCK.LEAVES];
@@ -96,7 +98,7 @@ const tmpColor = new THREE.Color();
 
 // ---- World ----------------------------------------------------------------------
 export class World {
-  constructor(scene, { sizeX = 96, sizeZ = 96, sizeY = 48, chunk = 16, seed = 1337, studs = true } = {}) {
+  constructor(scene, { sizeX = 96, sizeZ = 96, sizeY = 48, chunk = 16, seed = 1337, studs = false } = {}) {
     this.scene = scene;
     this.sx = sizeX;
     this.sz = sizeZ;
@@ -127,12 +129,12 @@ export class World {
     return this.data[this.idx(x, y, z)];
   }
 
-  /** Solid for collision. Outside x/z bounds and below y=0 count as walls. Water is wadeable. */
+  /** Solid for collision. Outside x/z bounds and below y=0 count as walls. Water and ladders are passable. */
   isSolid(x, y, z) {
     if (y >= this.sy) return false;
     if (x < 0 || x >= this.sx || z < 0 || z >= this.sz || y < 0) return true;
     const t = this.data[this.idx(x, y, z)];
-    return t !== BLOCK.AIR && t !== BLOCK.WATER;
+    return t !== BLOCK.AIR && t !== BLOCK.WATER && t !== BLOCK.LADDER;
   }
 
   set(x, y, z, type) {
@@ -155,13 +157,14 @@ export class World {
     this.dirty.add(Math.floor(z / this.chunk) * this.cx + Math.floor(x / this.chunk));
   }
 
-  /** Highest solid block y at column (x,z), or -1. */
+  /** Highest terrain surface y (including water), skipping passable ladders, or -1. */
   heightAt(x, z) {
     x = Math.floor(x);
     z = Math.floor(z);
     if (x < 0 || x >= this.sx || z < 0 || z >= this.sz) return -1;
     for (let y = this.sy - 1; y >= 0; y--) {
-      if (this.data[this.idx(x, y, z)] !== BLOCK.AIR) return y;
+      const block = this.data[this.idx(x, y, z)];
+      if (block !== BLOCK.AIR && block !== BLOCK.LADDER) return y;
     }
     return -1;
   }
@@ -612,7 +615,7 @@ export class World {
           const info = BLOCK_INFO[t];
           // Furniture uses the same stable voxel for collision, picking and saves,
           // with inset components merged into the chunk (no per-item draw calls).
-          if (info.furniture) {
+          if (info.furniture || info.ladder) {
             const box = (bx, by, bz, bw, bh, bd, color) => {
               tmpColor.setHex(color);
               for (const face of FACES) {
@@ -620,7 +623,12 @@ export class World {
                 pushQuad(corners, face.n, tmpColor.r * face.shade, tmpColor.g * face.shade, tmpColor.b * face.shade);
               }
             };
-            if (t === BLOCK.TV) {
+            if (t === BLOCK.LADDER) {
+              // Adjacent vertical cells line up into a continuous ladder.
+              box(.12, 0, .08, .07, 1, .10, 0x976438);
+              box(.81, 0, .08, .07, 1, .10, 0x976438);
+              for (const ry of [.15, .40, .65, .90]) box(.19, ry, .07, .62, .07, .12, 0xc58d4b);
+            } else if (t === BLOCK.TV) {
               box(.22, 0, .28, .56, .08, .44, 0x303541);
               box(.43, .08, .43, .14, .18, .14, 0x303541);
               box(.04, .23, .34, .92, .73, .22, 0x222733);
@@ -657,7 +665,8 @@ export class World {
             const nx = x + face.n[0];
             const ny = y + face.n[1];
             const nz = z + face.n[2];
-            if (ny < this.sy && this.get(nx, ny, nz) !== BLOCK.AIR && !BLOCK_INFO[this.get(nx, ny, nz)]?.furniture) continue;
+            const neighbour = this.get(nx, ny, nz);
+            if (ny < this.sy && neighbour !== BLOCK.AIR && !BLOCK_INFO[neighbour]?.furniture && neighbour !== BLOCK.LADDER) continue;
             if (ny >= this.sy) {
               // top of world: still render
             }
@@ -665,8 +674,21 @@ export class World {
             tmpColor.setHex(isTop && info.top ? info.top : info.color);
             const s = face.shade * variation;
             const corners = face.c.map((cc) => [x + cc[0], y + cc[1], z + cc[2]]);
-            pushQuad(corners, face.n, tmpColor.r * s, tmpColor.g * s, tmpColor.b * s);
+            if (t === BLOCK.GRASS && f !== 2 && f !== 3) {
+              // A turf cap wraps around a brown soil block, without changing
+              // its stored ID or the full-cube collision surface.
+              const lower = corners.map(cc => [cc[0], Math.min(cc[1], y + .78), cc[2]]);
+              pushQuad(lower, face.n, tmpColor.r * s, tmpColor.g * s, tmpColor.b * s);
+              tmpColor.setHex(info.rim);
+              const upper = corners.map(cc => [cc[0], Math.max(cc[1], y + .78), cc[2]]);
+              pushQuad(upper, face.n, tmpColor.r * s, tmpColor.g * s, tmpColor.b * s);
+            } else {
+              pushQuad(corners, face.n, tmpColor.r * s, tmpColor.g * s, tmpColor.b * s);
+            }
 
+            if (t === BLOCK.GRASS && isTop && this.get(x, y + 1, z) === BLOCK.AIR) {
+              v = this.pushGrassTuft(x, y, z, pos, nor, col, idx, v);
+            }
             if (isTop && this.studs && !info.noStud) {
               v = this.pushStud(x, y, z, tmpColor, variation, pos, nor, col, idx, v);
             }
@@ -695,6 +717,40 @@ export class World {
     mesh.matrixAutoUpdate = false;
     this.group.add(mesh);
     this.meshes[ci] = mesh;
+  }
+
+  /** Sparse cosmetic blades share the chunk mesh and never alter saved terrain. */
+  pushGrassTuft(x, y, z, pos, nor, col, idx, v) {
+    const scatter = hash3(x, y, z, this.seed + 713);
+    if (scatter > .42) return v;
+    const cx = x + .25 + hash3(x, y, z, this.seed + 714) * .5;
+    const cz = z + .25 + hash3(x, y, z, this.seed + 715) * .5;
+    const base = y + 1.003;
+    for (let blade = 0; blade < 3; blade++) {
+      const angle = scatter * Math.PI * 6 + blade * Math.PI / 3;
+      const dx = Math.cos(angle), dz = Math.sin(angle);
+      const height = .13 + hash3(x + blade, y, z, this.seed + 716) * .17;
+      const width = .04 + blade * .008;
+      const lean = (blade - 1) * .055;
+      const a = [cx - dx * width, base, cz - dz * width];
+      const b = [cx + dx * width, base, cz + dz * width];
+      const tip = [cx + dz * lean, base + height, cz - dx * lean];
+      tmpColor.setHex(blade === 1 ? 0x7aca50 : 0x4caa38);
+      // Duplicate winding and normals to make each blade visible from both sides
+      // while keeping the terrain material single sided.
+      for (const side of [1, -1]) {
+        const slope = lean / height;
+        const length = Math.hypot(1, slope);
+        const normal = [dz * side / length, -slope * side / length, -dx * side / length];
+        const points = side === 1 ? [a, tip, b] : [b, tip, a];
+        for (const point of points) {
+          pos.push(...point); nor.push(...normal);
+          col.push(tmpColor.r, tmpColor.g, tmpColor.b);
+        }
+        idx.push(v, v + 1, v + 2); v += 3;
+      }
+    }
+    return v;
   }
 
   pushStud(x, y, z, color, variation, pos, nor, col, idx, v) {

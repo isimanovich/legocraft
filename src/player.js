@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { seatPosition } from './furniture.js';
-import { GRAVITY, moveWithCollision, inWater, applyBuoyancy } from './physics.js';
+import { GRAVITY, moveWithCollision, inWater, applyBuoyancy, onLadder } from './physics.js';
 
 export class Player {
   constructor(camera, world) {
@@ -16,6 +16,7 @@ export class Player {
     this.sitting = false;
     this.seat = null;
     this.onGround = false;
+    this.climbing = false;
     this.maxHealth = 100;
     this.health = 100;
     this.regenDelay = 0;
@@ -36,6 +37,7 @@ export class Player {
 
   spawn() {
     this.stand();
+    this.climbing = false;
     const g = this.world.findGround(this.world.sx / 2, this.world.sz / 2, 20) ||
       { x: Math.floor(this.world.sx / 2), z: Math.floor(this.world.sz / 2), y: this.world.heightAt(this.world.sx / 2, this.world.sz / 2) };
     this.pos.set(g.x + 0.5, g.y + 1.01, g.z + 0.5);
@@ -91,6 +93,7 @@ export class Player {
 
   update(dt) {
     const k = this.keys;
+    this.climbing = false;
     if (this.sitting) {
       const move = this.touch.x || this.touch.z || this.touch.jump || ['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].some(key => k.has(key));
       if (move || !seatPosition(this.world, this.seat, this.halfW, this.height)) this.stand();
@@ -103,6 +106,7 @@ export class Player {
     }
     const sprint = this.touch.sprint || k.has('ShiftLeft') || k.has('ShiftRight');
     const swimming = inWater(this.world, this.pos);
+    this.climbing = this.health > 0 && !swimming && onLadder(this.world, this.pos, this.halfW, this.height);
     const speed = (sprint ? 8.5 : 5.2) * (swimming ? 0.55 : 1);
 
     this._fwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
@@ -119,23 +123,30 @@ export class Player {
       mx *= inv;
       mz *= inv;
     }
-    const wishX = (this._fwd.x * mz + this._right.x * mx) * speed;
-    const wishZ = (this._fwd.z * mz + this._right.z * mx) * speed;
+    // While gripping rungs, forward/back input controls height. Strafing lets
+    // the player leave the ladder; normal forward movement resumes at its top.
+    const walkZ = this.climbing ? 0 : mz;
+    const wishX = (this._fwd.x * walkZ + this._right.x * mx) * speed;
+    const wishZ = (this._fwd.z * walkZ + this._right.z * mx) * speed;
 
     // Ground friction / air / water control
-    const accel = this.onGround || swimming ? 18 : 5;
+    const accel = this.onGround || swimming || this.climbing ? 18 : 5;
     const t = Math.min(1, accel * dt);
     this.vel.x += (wishX - this.vel.x) * t;
     this.vel.z += (wishZ - this.vel.z) * t;
 
     const jumping = this.touch.jump || k.has('Space');
-    if (jumping && this.onGround) {
-      this.vel.y = 9.2;
-      this.onGround = false;
+    if (this.climbing) {
+      this.vel.y = (jumping ? 1 : mz) * 3.2;
+    } else {
+      if (jumping && this.onGround) {
+        this.vel.y = 9.2;
+        this.onGround = false;
+      }
+      this.vel.y -= GRAVITY * dt;
+      if (swimming) applyBuoyancy(this.vel, dt, jumping);
+      if (this.vel.y < -40) this.vel.y = -40;
     }
-    this.vel.y -= GRAVITY * dt;
-    if (swimming) applyBuoyancy(this.vel, dt, jumping);
-    if (this.vel.y < -40) this.vel.y = -40;
 
     const res = moveWithCollision(this.world, this.pos, this.vel, dt, this.halfW, this.height);
     this.onGround = res.onGround;
@@ -149,7 +160,7 @@ export class Player {
 
     // View bob
     const hs = Math.hypot(this.vel.x, this.vel.z);
-    if (this.onGround && hs > 0.5) this.bob += dt * hs * 1.6;
+    if (!this.climbing && this.onGround && hs > 0.5) this.bob += dt * hs * 1.6;
     this.syncCamera();
   }
 

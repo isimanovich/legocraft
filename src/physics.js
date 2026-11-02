@@ -10,6 +10,17 @@ export function inWater(world, pos) {
   return world.get(Math.floor(pos.x), Math.floor(pos.y + 0.3), Math.floor(pos.z)) === BLOCK.WATER;
 }
 
+/** A ladder must overlap the player's body, rather than a distant nearby wall. */
+export function onLadder(world, pos, halfW = 0.3, height = 1.8) {
+  const x0 = Math.floor(pos.x - halfW + EPS), x1 = Math.floor(pos.x + halfW - EPS);
+  const z0 = Math.floor(pos.z - halfW + EPS), z1 = Math.floor(pos.z + halfW - EPS);
+  const y0 = Math.floor(pos.y + 0.05), y1 = Math.floor(pos.y + Math.min(height - 0.1, 1.35));
+  for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+    if (world.get(x, y, z) === BLOCK.LADDER) return true;
+  }
+  return false;
+}
+
 /**
  * Buoyancy for an entity in water: cancels gravity, floats it up until the legs
  * clear the surface, and damps vertical motion so it bobs instead of pogoing.

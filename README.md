@@ -51,6 +51,43 @@ in multiplayer, including changes made while paused. Colours are remembered on
 this browser/device when storage is available; blocked storage still allows
 changes for the current tab. Shared player profiles also include these colours.
 
+### Smooth blocks, grass and ladders
+
+Blocks now have smooth, flat faces without studs. Grass blocks have brown soil
+underneath, a green turf cap and green edging, with short grass blades sticking
+up from some exposed tops. The blades are decorative: they do not block walking,
+placement or selection, and do not add objects to saved terrain. Existing worlds
+keep their terrain and gain the new look when opened.
+
+Choose **Ladder** at the end of **Bag / E**, then place pieces in a vertical stack
+using the normal Place control. Enter the ladder's block space to grab it:
+
+- **W / forward thumbstick** or **Space / Jump** climbs up.
+- **S / backward thumbstick** climbs down.
+- Release forward/back and Jump to hold your height.
+- Move sideways to leave the ladder. At its top, keep moving forward to step
+  onto a clear landing. Ceilings and solid blocks still stop the player.
+
+Ladders work in Solo and multiplayer and are included in saved worlds. They do
+not provide a solid floor; removing the ladder releases a climber. Their rails
+face negative Z, and the climbable space is accessible from either side.
+
+### Ambient sound
+
+Nearby exposed water has a quiet rushing sound that fades with distance.
+Entering water splashes, and moving through it produces swimming strokes.
+Footsteps follow actual movement and use different sounds for grass/leaves,
+dirt, sand, wood/planks/ladders, stone/baseplate, coloured bricks, soft furniture
+and metal. Faster travel produces more frequent steps, with slight pitch and
+volume variation. Standing still, sitting and jumping through the air do not
+produce ground footsteps.
+
+Use **Sound: on / off** on the start or pause screen to mute or restore all
+sounds. The choice is remembered on this device when storage is available.
+Audio starts after a tap/click, and water/movement ambience stops while paused,
+naming a body, dead or in a hidden tab. The sounds are generated locally; no
+audio downloads or extra packages are needed.
+
 ### Furnish a home
 
 Open **Bag / E**, select a hotbar slot, then pick **TV (off)**, **Couch** or
@@ -223,14 +260,15 @@ to play starts with neutral controls.
 |---|---|
 | W A S D / arrows | Move |
 | Mouse | Look |
-| Space | Jump |
+| Space | Jump / climb ladder up |
+| W / S on a ladder | Climb up / down; release to hold |
 | Shift | Sprint |
 | Left mouse | Break block / hit enemy (hold to repeat); on a fallen Stalker: hold to carry it, release to drop |
 | Right mouse | Place selected brick |
 | Q / middle mouse | Throw an exploding tomato |
 | N | Name the fallen Stalker under the crosshair (or the one you're carrying) |
 | 1-9 / wheel | Select hotbar slot |
-| E | Inventory: all 20 bricks plus the sword; solo pauses while it is open |
+| E | Inventory: blocks, furniture, ladder and sword; solo pauses while it is open |
 | R | Restart after death |
 
 Enemies come in waves. A wave has a fixed roster (4 minifigs in wave 1, growing
@@ -279,7 +317,7 @@ your controls pause. Click a hotbar slot
 (or press its number) to select it, then click an item to put it there.
 Items are the 20 brick colours (red, blue, yellow, white, grass, lime, leaf,
 orange, pink, purple, azure, dark red, gold, black, dark grey, grey, tan,
-brown, wood, plank) and the sword. The sword is a look, not a weapon upgrade:
+brown, wood, plank), TV, couch, bed, ladder and the sword. The sword is a look, not a weapon upgrade:
 it hits exactly as hard as a brick, swings sideways, and can't place
 anything. `E` or `Esc` closes the inventory and re-grabs the mouse.
 
@@ -518,7 +556,7 @@ src/solo-saves.js Solo snapshots and device-local IndexedDB save library
 server/persistence.mjs atomic save files, migration backups, and recovery
 src/remote-players.js   other players' minifig avatars and movement
 src/network-entities.js replicated enemies, animals, bodies, and projectiles
-src/world.js      voxel storage, terrain gen (lakes, trees, structures), chunk meshing (with studs), DDA raycast
+src/world.js      voxel storage, terrain gen (lakes, trees, structures), smooth chunk meshing, turf/blades, ladder meshes, DDA raycast
 src/physics.js    AABB vs voxel collision, ray/box, buoyancy
 src/pathfind.js   bounded A* over standable cells (enemy navigation)
 src/player.js     first-person controller
@@ -537,8 +575,8 @@ test/browser.mjs  optional Chromium regression tests for touch and laptop contro
 test/multiplayer-browser.mjs optional multi-browser shared-room regression tests
 ```
 
-Tuning knobs: `World` options in `main.js` (size, seed, `studs: false` for a
-flat Minecraft look), structure counts in `World.placeStructures`, `ENEMY_TYPES`
+Tuning knobs: `World` options in `main.js` (size, seed, `studs: true` for optional
+legacy studs; grass stays stud-free), structure counts in `World.placeStructures`, `ENEMY_TYPES`
 / `AGGRO_RADIUS` / `waveMods()` in `enemies.js`, `waveSize()` / `maxAlive()` /
 `INTERMISSION_SECONDS` in `main.js`.
 
@@ -553,7 +591,8 @@ npm test
 ```
 
 `npm run test:server`, `npm run test:smoke`, `npm run test:remote`,
-`npm run test:touch`, and `npm run test:saves` run the suites separately.
+`npm run test:touch`, `npm run test:saves`, `npm run test:ladder`,
+`npm run test:blocks` and `npm run test:audio` run the suites separately.
 Server checks cover full-state restart recovery, older saves, backup recovery,
 and refusal to overwrite unsupported saves. Solo checks cover snapshot restoration
 and incompatible or damaged saves. The actual IndexedDB browser check skips
@@ -580,6 +619,8 @@ PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
   CHROMIUM_PATH=/usr/bin/chromium node --test test/saves-browser.mjs
 PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
   CHROMIUM_PATH=/usr/bin/chromium node --test test/home-browser.mjs
+PLAYWRIGHT_MODULE=/tmp/legocraft-browser/node_modules/playwright/index.mjs \
+  CHROMIUM_PATH=/usr/bin/chromium node --test test/terrain-browser.mjs
 ```
 
 With Playwright and its Chromium already installed in your own development setup,
@@ -594,3 +635,6 @@ The additional `npm run test:home-browser` suite checks skin preferences, furnit
 placement and interactions, day/night save restoration, shadows and water splash
 physics. Run browser suites individually on machines using software rendering;
 several simultaneous worlds can exceed the tests' timing limits.
+
+`npm run test:terrain-browser` additionally exercises ladder placement and climbing
+with keyboard/touch controls, plus real WebAudio ambience and mute/pause behavior.

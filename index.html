@@ -41,7 +41,7 @@
   .slot { width: 52px; height: 52px; border: 3px solid rgba(255,255,255,.25); border-radius: 6px; position: relative; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
   .slot.active { border-color: var(--yellow); box-shadow: 0 0 0 2px rgba(242,205,55,.4); transform: translateY(-4px); }
   .slot .brick { width: 32px; height: 32px; border-radius: 3px; box-shadow: inset 0 -6px 0 rgba(0,0,0,.25), inset 0 2px 0 rgba(255,255,255,.25); position: relative; }
-  .slot .brick::after { content: ""; position: absolute; left: 50%; top: -5px; width: 14px; height: 7px; transform: translateX(-50%); border-radius: 50%/60%; background: inherit; box-shadow: inset 0 -2px 0 rgba(0,0,0,.25); }
+
   .slot .num { position: absolute; left: 4px; top: 2px; font-size: 11px; font-weight: 800; opacity: .8; text-shadow: 0 1px 0 #000; }
   #blockname { position: absolute; left: 50%; bottom: 122px; transform: translateX(-50%); font-weight: 700; font-size: 14px; text-shadow: 0 2px 0 #000; opacity: .9; }
 
@@ -327,6 +327,9 @@
   .furniture-icon { width: 30px; height: 30px; font-size: 30px; line-height: 30px; text-align: center; color: #46cab0; text-shadow: 1px 2px #073630; }
   .furniture-icon[data-furniture="tv"] { color: #21343e; background: #080f17; border: 3px solid #6c7881; box-sizing: border-box; border-radius: 3px; font-size: 0; height: 23px; }
   .furniture-icon[data-furniture="bed"] { color: #f57b8e; text-shadow: 1px 2px #864831; }
+  .ladder-icon { width: 26px; height: 34px; border-left: 5px solid #bd874e; border-right: 5px solid #bd874e; box-sizing: border-box; background: repeating-linear-gradient(to bottom, transparent 0 6px, #dab47a 6px 10px); }
+  #sound-toggle { margin: 0 0 18px; font-size: 14px; padding: 10px 18px; }
+  #sound-toggle[aria-pressed="false"] { background: #d3dce1; }
   #skin-picker { width: min(440px, 100%); box-sizing: border-box; margin: 0 0 18px; padding: 12px; border: 1px solid #ffffff40; border-radius: 12px; background: #05131d99; }
   #skin-picker summary { cursor: pointer; font-weight: bold; padding: 4px; color: var(--yellow); }
   .skin-editor { display: flex; gap: 20px; align-items: center; justify-content: center; padding: 12px 0; }
@@ -407,6 +410,7 @@
       <button type="button" class="input-btn" id="input-laptop" aria-pressed="true">Laptop</button>
       <button type="button" class="input-btn" id="input-touch" aria-pressed="false">iPad / iPhone</button>
     </div>
+    <button type="button" class="menu-btn" id="sound-toggle" aria-pressed="true">Sound: on</button>
     <details id="skin-picker">
       <summary>Personalise your skin</summary>
       <div class="skin-editor">
@@ -424,12 +428,13 @@
       <p><b>Left thumbstick</b> to move. <b>Drag the world</b> to look.</p>
       <p><b>Hit</b> to break or attack; hold to carry, release to drop.<br/><b>Place</b> builds. <b>Jump</b> also swims. <b>Sprint</b> toggles speed.</p>
       <p>Tap a hotbar slot to select. <b>Bag</b> opens inventory.<br/><b>Tomato</b> throws; <b>Name</b> names a fallen Stalker.<br/><b>Use</b> sits on a couch or sleeps in a bed; move to stand.</p>
-      <small>Landscape gives you more room. Pause to switch controls.</small>
+      <small>Landscape gives you more room. Pause to switch controls.<br/>On ladders: forward / Jump climbs up; back climbs down; release to hold.</small>
     </div>
     <div class="controls" id="laptop-help">
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><div>Move</div>
       <div><kbd>Mouse</kbd></div><div>Look</div>
-      <div><kbd>Space</kbd></div><div>Jump</div>
+      <div><kbd>Space</kbd></div><div>Jump / climb ladder up</div>
+      <div><kbd>W</kbd> / <kbd>S</kbd></div><div>On a ladder: up / down; release to hold</div>
       <div><kbd>Shift</kbd></div><div>Sprint</div>
       <div><kbd>LMB</kbd></div><div>Break block / attack enemy / hold to carry a fallen Stalker</div>
       <div><kbd>RMB</kbd></div><div>Place block</div>
@@ -492,7 +497,7 @@
 
   <div id="inventory" class="overlay hidden" role="dialog" aria-labelledby="inv-title">
     <h2 id="inv-title">Inventory</h2>
-    <div class="inv-sub" id="inv-description">Pick a hotbar slot, then tap or click an item to put it there. TV, couch and bed are at the end of the list.</div>
+    <div class="inv-sub" id="inv-description">Pick a hotbar slot, then tap or click an item to put it there. Furniture and climbable ladders are at the end of the list.</div>
     <div id="inv-items" class="inv-grid"></div>
     <div id="inv-hotbar" class="inv-hotbar"></div>
     <div id="inv-name" class="inv-name">&nbsp;</div>

@@ -8,6 +8,7 @@ import { Enemy, findSpawnSpot, BLAST_RADIUS, BLAST_BLOCK_RADIUS, makeNameTag, NA
 import { Debris } from './debris.js';
 import { Ragdolls, CARRY_DISTANCE } from './ragdoll.js';
 import { Sfx } from './sfx.js';
+import { Ambience } from './ambience.js';
 import { rayBox, boxCollides } from './physics.js';
 import { Animal } from './animals.js';
 import { TouchControls } from './touch-controls.js';
@@ -42,6 +43,7 @@ const player = new Player(camera, world);
 const atmosphere = new Atmosphere(scene, renderer, world, camera);
 const debris = new Debris(scene, world);
 const sfx = new Sfx();
+const ambience = new Ambience(sfx, world);
 const ragdolls = new Ragdolls(scene, world);
 ragdolls.onImpact = (body, speed) => sfx.thud(Math.min(1, speed / 12));
 const tomatoes = new Tomatoes(scene, world);
@@ -71,14 +73,22 @@ function buildHandBrick() {
   const mat = new THREE.MeshLambertMaterial({ color: 0xc91a09 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.19, 0.64), mat);
   g.add(body);
-  const studGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.06, 10);
-  for (let i = 0; i < 2; i++) {
-    for (let j = 0; j < 4; j++) {
-      const s = new THREE.Mesh(studGeo, mat);
-      s.position.set(-0.08 + i * 0.16, 0.125, -0.24 + j * 0.16);
-      g.add(s);
-    }
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(.32, .045, .64), new THREE.MeshLambertMaterial({ color: 0x55b83e }));
+  cap.position.y = .0775;
+  cap.visible = false;
+  g.add(cap);
+  const ladder = new THREE.Group();
+  const wood = new THREE.MeshLambertMaterial({ color: 0xb67c4a });
+  for (const x of [-.12, .12]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(.045, .52, .04), wood);
+    rail.position.set(x, .08, 0); ladder.add(rail);
   }
+  for (const y of [-.12, .03, .18, .33]) {
+    const rung = new THREE.Mesh(new THREE.BoxGeometry(.24, .035, .04), wood);
+    rung.position.set(0, y, 0); ladder.add(rung);
+  }
+  ladder.visible = false;
+  g.add(ladder);
   return g;
 }
 
@@ -197,6 +207,21 @@ for (const preset of SKIN_PRESETS) {
 $('skin-picker').addEventListener('click', (event) => event.stopPropagation());
 updateSkin();
 
+function syncSoundButton() {
+  $('sound-toggle').setAttribute('aria-pressed', String(sfx.enabled));
+  $('sound-toggle').textContent = sfx.enabled ? 'Sound: on' : 'Sound: off';
+}
+try { sfx.setEnabled(localStorage.getItem('legocraft-sound') !== 'off'); } catch { /* Optional preference. */ }
+syncSoundButton();
+$('sound-toggle').addEventListener('click', (event) => {
+  event.stopPropagation();
+  sfx.setEnabled(!sfx.enabled);
+  if (sfx.enabled) sfx.init();
+  else ambience.reset();
+  try { localStorage.setItem('legocraft-sound', sfx.enabled ? 'on' : 'off'); } catch { /* Optional preference. */ }
+  syncSoundButton();
+});
+
 /** Minifigs in a wave. Grows every wave; a wave ends only when all of them are destroyed. */
 function waveSize(wave) {
   return 3 + Math.floor(wave * 1.5);
@@ -219,17 +244,19 @@ function startWave(wave) {
 // ---- HUD -------------------------------------------------------------------
 /** Fill a slot element with an item's icon (brick swatch or sword). */
 function renderSlotIcon(el, item) {
-  el.querySelector('.brick, .sword, .furniture-icon')?.remove();
+  el.querySelector('.brick, .sword, .furniture-icon, .ladder-icon')?.remove();
   const icon = document.createElement('div');
   if (item === 'sword') {
     icon.className = 'sword';
+  } else if (item === BLOCK.LADDER) {
+    icon.className = 'ladder-icon';
   } else if ([BLOCK.TV, BLOCK.COUCH, BLOCK.BED].includes(item)) {
     icon.className = 'furniture-icon';
     icon.textContent = item === BLOCK.TV ? '▣' : item === BLOCK.COUCH ? '▰' : '▱';
     icon.dataset.furniture = item === BLOCK.TV ? 'tv' : item === BLOCK.COUCH ? 'couch' : 'bed';
   } else {
     icon.className = 'brick';
-    icon.style.background = itemColor(item);
+    icon.style.background = item === BLOCK.GRASS ? 'linear-gradient(#56b83f 0 24%, #825337 24% 100%)' : itemColor(item);
   }
   el.append(icon);
   el.title = itemName(item);
@@ -263,7 +290,13 @@ function setSlot(i) {
   const sword = item === 'sword';
   swordHand.visible = sword;
   hand.visible = !sword;
-  if (!sword) hand.children[0].material.color.setHex(BLOCK_INFO[item].color);
+  if (!sword) {
+    hand.children[0].visible = item !== BLOCK.LADDER;
+    hand.children[0].material.color.setHex(BLOCK_INFO[item].color);
+    hand.children[1].visible = item === BLOCK.GRASS;
+    hand.children[2].visible = item === BLOCK.LADDER;
+    if (item === BLOCK.GRASS) hand.children[1].material.color.setHex(BLOCK_INFO[item].top);
+  }
 }
 
 /** Put `item` in hotbar slot `i` and refresh both the HUD and the inventory copy. */
@@ -711,8 +744,8 @@ function syncSessionUi() {
   $('room-reset').hidden = !connected || state.mode !== 'paused' || session.hostId !== session.playerId;
   $('new-game').classList.toggle('hidden', connected || state.mode !== 'paused');
   $('inv-description').textContent = connected
-    ? 'Pick a slot and item. The room keeps playing while your bag is open.'
-    : 'Pick a hotbar slot, then tap or click an item to put it there.';
+    ? 'Pick a slot and item. Ladders and furniture are at the end. The room keeps playing while your bag is open.'
+    : 'Pick a hotbar slot, then tap or click an item. Ladders and furniture are at the end.';
   $('inventory-key-help').textContent = connected
     ? 'Inventory (the room keeps playing): all bricks and the sword'
     : 'Inventory (pauses the game): all bricks and the sword';
@@ -1044,6 +1077,7 @@ function syncControls() {
   $('laptop-help').hidden = touch;
   touchControls.setEnabled(touch && state.mode === 'playing' && !state.naming);
   syncSessionUi();
+  if (state.mode !== 'playing' || state.naming || document.hidden) ambience.update(0, player, false);
   if (!networkLoading) session.pose(player, state.mode === 'playing' && !state.naming);
 }
 
@@ -1606,6 +1640,7 @@ function resetRun() {
   pendingDetonations.length = 0;
   debris.clear();
   atmosphere.reset();
+  ambience.reset();
   player.stand();
   ragdolls.clear();
   tomatoes.clear();
@@ -1812,10 +1847,11 @@ function frame(now) {
     player.lookDir(_dir);
     const hit = world.raycast(_eye, _dir, 6);
     const target = enemyUnderCrosshair(4.5);
+    const ladderHint = player.climbing || (hit && world.get(hit.x, hit.y, hit.z) === BLOCK.LADDER);
     const furnishing = hit && [BLOCK.TV, BLOCK.COUCH, BLOCK.BED].includes(world.get(hit.x, hit.y, hit.z));
     $('furniture-hint').textContent = player.sitting ? 'Use / F · Stand up' : furnishing
-      ? (world.get(hit.x, hit.y, hit.z) === BLOCK.TV ? 'TV · Off' : world.get(hit.x, hit.y, hit.z) === BLOCK.COUCH ? 'Use / F · Sit on couch' : 'Use / F · Sleep until ' + (state.timeOfDay < .5 ? 'night' : 'day')) : '';
-    $('furniture-hint').hidden = !player.sitting && !furnishing;
+      ? (world.get(hit.x, hit.y, hit.z) === BLOCK.TV ? 'TV · Off' : world.get(hit.x, hit.y, hit.z) === BLOCK.COUCH ? 'Use / F · Sit on couch' : 'Use / F · Sleep until ' + (state.timeOfDay < .5 ? 'night' : 'day')) : ladderHint ? (controlMode === 'touch' ? 'Ladder · Forward / Jump up · Back down · Release to hold' : 'Ladder · W / Space up · S down · Release to hold') : '';
+    $('furniture-hint').hidden = !player.sitting && !furnishing && !ladderHint;
     if (hit && (!target || hit.dist < target.dist) && world.get(hit.x, hit.y, hit.z) !== BLOCK.BEDROCK) {
       outline.visible = true;
       outline.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
@@ -1830,6 +1866,7 @@ function frame(now) {
     remotePlayers.update(dt);
     networkEntities.update(dt);
   }
+  ambience.update(dt, player, state.mode === 'playing' && !state.naming && !document.hidden);
   atmosphere.update(dt, player, state.timeOfDay);
   debris.update(dt);
   world.update(4);

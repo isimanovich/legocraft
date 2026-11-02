@@ -1,6 +1,6 @@
 // Append new block names; never reorder or reuse these IDs. Names in each save
 // allow a later migration to translate a palette without changing old worlds.
-export const BLOCK_PALETTE = Object.freeze(['AIR', 'GRASS', 'DIRT', 'STONE', 'SAND', 'WOOD', 'LEAVES', 'RED', 'BLUE', 'YELLOW', 'WHITE', 'BEDROCK', 'WATER', 'ORANGE', 'LIME', 'PINK', 'PURPLE', 'BLACK', 'DARKGREY', 'AZURE', 'DARKRED', 'PLANKS', 'GOLD', 'TV', 'COUCH', 'BED']);
+export const BLOCK_PALETTE = Object.freeze(['AIR', 'GRASS', 'DIRT', 'STONE', 'SAND', 'WOOD', 'LEAVES', 'RED', 'BLUE', 'YELLOW', 'WHITE', 'BEDROCK', 'WATER', 'ORANGE', 'LIME', 'PINK', 'PURPLE', 'BLACK', 'DARKGREY', 'AZURE', 'DARKRED', 'PLANKS', 'GOLD', 'TV', 'COUCH', 'BED', 'LADDER']);
 export const SAVE_FORMAT_VERSION = 2;
 export const TERRAIN_FORMAT_VERSION = 1;
 export const WORLD_SIZE = Object.freeze({ sizeX: 144, sizeY: 48, sizeZ: 144 });
